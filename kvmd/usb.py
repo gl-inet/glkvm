@@ -23,6 +23,7 @@
 import os
 
 from . import env
+from .logging import get_logger
 
 
 # =====
@@ -49,9 +50,10 @@ def get_udc_path(udc: str, *parts: str) -> str:
 # =====
 G_UDC = "UDC"
 G_FUNCTIONS = "functions"
-G_PROFILE_NAME = "c.1"
+G_PROFILE_NAME = "b.1"
 G_PROFILE = f"configs/{G_PROFILE_NAME}"
 
 
 def get_gadget_path(gadget: str, *parts: str) -> str:
+    get_logger().info(f"get_gadget_path: {gadget}, {parts}")
     return os.path.join(f"{env.SYSFS_PREFIX}/sys/kernel/config/usb_gadget", gadget, *parts)

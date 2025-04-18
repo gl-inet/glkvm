@@ -25,6 +25,7 @@ import contextlib
 import dataclasses
 import functools
 import time
+import os
 
 from typing import AsyncGenerator
 
@@ -40,6 +41,7 @@ from ....validators.os import valid_command
 from ....validators.kvm import valid_msd_image_name
 
 from .... import aiotools
+from .... import aiohelpers
 from .... import fstab
 
 from .. import MsdIsBusyError
@@ -56,6 +58,9 @@ from .. import MsdFileWriter
 from .storage import Image
 from .storage import Storage
 from .drive import Drive
+
+from asyncio import create_subprocess_exec
+import subprocess
 
 
 # =====
@@ -89,6 +94,7 @@ class _State:
 
         self.storage: (Storage | None) = None
         self.vd: (_VirtualDriveState | None) = None
+        self.vd_partition: (_VirtualDriveState | None) = None
 
         self._region = aiotools.AioExclusiveRegion(MsdIsBusyError)
         self._lock = asyncio.Lock()
@@ -111,6 +117,13 @@ class _State:
 
 # =====
 class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
+    mount_dict = {
+        "/dev/mmcblk0p10": "/userdata/media",
+        "/dev/block/by-name/media": "/userdata/media",
+        "/dev/sda1": "/mnt/sdcard/"
+        }
+    partition_device = "/dev/block/by-name/media"
+    partition_mount_path = "/userdata/media"
     def __init__(  # pylint: disable=super-init-not-called
         self,
         read_chunk_size: int,
@@ -131,8 +144,17 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         self.__initial_image: str = initial["image"]
         self.__initial_cdrom: bool = initial["cdrom"]
 
+
+
+
+
         self.__drive = Drive(gadget, instance=0, lun=0)
-        self.__storage = Storage(fstab.find_msd().root_path, remount_cmd)
+        self.__drive_partition = Drive(gadget, instance=1, lun=0)
+
+
+
+
+        self.__storage = Storage("/userdata/media", remount_cmd)
 
         self.__reader: (MsdFileReader | None) = None
         self.__writer: (MsdFileWriter | None) = None
@@ -152,8 +174,8 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             "sync_chunk_size":   Option(4194304, type=functools.partial(valid_number, min=1024)),
 
             "remount_cmd": Option([
-                "/usr/bin/sudo", "--non-interactive",
-                "/usr/bin/kvmd-helper-otgmsd-remount", "{mode}",
+                "/bin/mount",
+                "-o", "remount,${mode}",
             ], type=valid_command),
 
             "initial": {
@@ -163,14 +185,21 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         }
 
     async def get_state(self) -> dict:
+
         async with self.__state._lock:  # pylint: disable=protected-access
             storage: (dict | None) = None
             if self.__state.storage:
-                if self.__writer:
-                    # При загрузке файла показываем актуальную статистику вручную
-                    await self.__storage.reload_parts_info()
+
+
+
+
+
+
+                await self.__storage.reload_parts_info()
+
 
                 storage = dataclasses.asdict(self.__state.storage)
+
                 for name in list(storage["images"]):
                     del storage["images"][name]["name"]
                     del storage["images"][name]["path"]
@@ -178,14 +207,24 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 for name in list(storage["parts"]):
                     del storage["parts"][name]["name"]
 
+
                 storage["downloading"] = (self.__reader.get_state() if self.__reader else None)
                 storage["uploading"] = (self.__writer.get_state() if self.__writer else None)
+
 
             vd: (dict | None) = None
             if self.__state.vd:
                 vd = dataclasses.asdict(self.__state.vd)
+
                 if vd["image"]:
                     del vd["image"]["path"]
+
+            vd_partition: (dict | None) = None
+            if self.__state.vd_partition:
+                vd_partition = dataclasses.asdict(self.__state.vd_partition)
+                if vd_partition["image"]:
+                    del vd_partition["image"]["path"]
+
 
             return {
                 "enabled": True,
@@ -193,6 +232,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 "busy": self.__state.is_busy(),
                 "storage": storage,
                 "drive": vd,
+                "drive_partition": vd_partition,
             }
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
@@ -253,6 +293,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 if rw:
                     self.__state.vd.cdrom = False
 
+
     @aiotools.atomic_fg
     async def set_connected(self, connected: bool) -> None:
         async with self.__state.busy():
@@ -280,6 +321,169 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 await self.__storage.remount_rw(False, fatal=False)
 
             self.__state.vd.connected = connected
+
+
+    @aiotools.atomic_fg
+    async def partition_show(self) -> dict[str, int]:
+        devices = {}
+
+        try:
+            with open("/proc/partitions", "r") as f:
+                lines = f.readlines()
+
+                for line in lines[2:]:
+                    parts = line.strip().split()
+                    if len(parts) == 4:
+                        dev_name = parts[3]
+                        size_kb = int(parts[2])
+
+                        if dev_name.startswith("sd"):
+                            disk_name = dev_name.rstrip("0123456789")
+
+                            try:
+                                with open(f"/sys/block/{disk_name}/removable", "r") as f:
+                                    removable = f.read().strip()
+                                if removable == "1":
+
+                                    if len(dev_name) > len(disk_name):
+                                        devices[f"/dev/{dev_name}"] = size_kb * 1024
+                            except (IOError, OSError):
+                                continue
+                        if dev_name.startswith("mmcblk0p10"):
+                            devices[f"/dev/{dev_name}"] = size_kb * 1024
+        except (IOError, OSError) as e:
+            get_logger(0).error(f"Error reading partitions: {str(e)}")
+
+        logger = get_logger(0)
+        logger.info(f"Found {len(devices)} USB devices {devices}")
+        return devices
+
+    @aiotools.atomic_fg
+    async def partition_connect(self,path:str) -> None:
+        async with self.__state.busy():
+            assert self.__state.vd_partition
+
+            await aiotools.run_async(os.sync)
+
+            if path.startswith("/dev/"):
+
+                realpath = os.path.realpath(path)
+                await aiohelpers.umount(realpath)
+
+            self.__drive_partition.set_rw_flag(True)
+            self.__drive_partition.set_cdrom_flag(False)
+            self.__drive_partition.set_image_path(path)
+            self.__state.vd_partition.rw = True
+            self.__state.vd_partition.cdrom = False
+            self.__state.vd_partition.connected = True
+            self.__state.vd_partition.image = await self.__storage.make_image_by_path(path)
+
+    async def __clean_trash_dirs(self, mount_path: str) -> None:
+        """清理指定路径下的回收站目录
+
+        Args:
+            mount_path: 要清理的挂载路径
+        """
+        logger = get_logger(0)
+        trash_dirs = [".Trashes", "$RECYCLE.BIN", ".Trash-1000"]
+        for trash_dir in trash_dirs:
+
+            for root, dirs, _ in os.walk(mount_path):
+
+                for d in dirs:
+                    if d.lower() == trash_dir.lower():
+                        trash_path = os.path.join(root, d)
+                        try:
+                            import shutil
+                            logger.info(f"Removing trash directory: {trash_path}")
+                            shutil.rmtree(trash_path)
+                        except Exception as e:
+                            logger.error(f"Failed to remove trash directory {trash_path}: {e}")
+
+    async def __run_command(self, cmd: str, args: list[str], error_msg: str) -> bool:
+        """执行命令并处理结果
+
+        Args:
+            cmd: 要执行的命令
+            args: 命令参数列表
+            error_msg: 错误信息前缀
+
+        Returns:
+            bool: 命令是否成功执行
+        """
+        logger = get_logger(0)
+        try:
+            process = await create_subprocess_exec(
+                cmd,
+                *args,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                logger.error(f"{error_msg}: {stderr.decode()}")
+                return False
+            return True
+        except Exception as e:
+            logger.error(f"{error_msg}: {str(e)}")
+            return False
+
+    @aiotools.atomic_fg
+    async def partition_disconnect(self) -> None:
+        async with self.__state.busy():
+            assert self.__state.vd_partition
+            path = self.__drive_partition.get_image_path()
+            get_logger(0).info(f"path: {path}")
+            if not path or path.strip() == "":
+
+
+                path = os.path.realpath(self.__state.vd_partition.image.path)
+            self.__drive_partition.set_image_path("")
+            await asyncio.sleep(1)
+            self.__state.vd_partition.connected = False
+
+
+            if path.startswith("/dev/"):
+                mount_path = self.mount_dict.get(path)
+                if mount_path:
+                    try:
+                        get_logger(0).info(f"Mounting {path} to {mount_path}")
+
+                        await aiohelpers.mount(path, mount_path, "rw,nonempty",cmd = ["mount.exfat"])
+
+
+                        await self.__clean_trash_dirs(mount_path)
+
+                    except Exception as e:
+                        get_logger(0).error(f"Failed to remount partition {path} to {mount_path}: {e}")
+
+
+        await self.__reload_state()
+
+    @aiotools.atomic_fg
+    async def partition_format(self) -> None:
+        async with self.__state.busy():
+            assert self.__state.vd_partition
+            try:
+
+                get_logger(0).info(f"Umounting {self.partition_device}")
+                await aiohelpers.umount(self.partition_device)
+
+
+                get_logger(0).info(f"Formatting {self.partition_device}")
+                if not await self.__run_command("mkfs.exfat", [self.partition_device], "mkfs.exfat command failed"):
+                    raise Exception("Failed to format partition")
+
+
+                if not await self.__run_command("exfatlabel", [self.partition_device, "GLKVM"], "exfatlabel command failed"):
+                    get_logger(0).warning("Failed to set volume label, but continuing anyway")
+
+
+                await aiohelpers.mount(self.partition_device, self.partition_mount_path, "rw,nonempty", cmd=["mount.exfat"])
+            except Exception as e:
+                get_logger(0).error(f"Failed to umount or format partition: {e}")
+                raise
+        await self.__reload_state()
 
     @contextlib.asynccontextmanager
     async def read_image(self, name: str) -> AsyncGenerator[MsdFileReader, None]:
@@ -313,7 +517,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                         self.__STATE_check_disconnected()
                         image = await self.__STORAGE_create_new_image(name)
 
-                        await image.remount_rw(True)
+
                         await image.set_complete(False)
 
                         self.__writer = await MsdFileWriter(
@@ -338,10 +542,11 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                             await aiotools.shield_fg(self.__close_writer())
                         finally:
                             if image:
-                                await aiotools.shield_fg(image.remount_rw(False, fatal=False))
+
+                                self.__notifier.notify()
         finally:
-            # Между закрытием файла и эвентом айнотифи состояние может быть не обновлено,
-            # так что форсим обновление вручную, чтобы получить актуальное состояние.
+
+
             await aiotools.shield_fg(self.__reload_state())
 
     @aiotools.atomic_fg
@@ -355,11 +560,12 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             if self.__state.vd.image == image:
                 self.__state.vd.image = None
 
-            await image.remount_rw(True)
+
             try:
                 await image.remove(fatal=True)
             finally:
-                await aiotools.shield_fg(image.remount_rw(False, fatal=False))
+
+                self.__notifier.notify()
 
     # =====
 
@@ -440,21 +646,34 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 time.sleep(1)
 
     async def __reload_state(self, notify: bool=True) -> None:
+
         logger = get_logger(0)
         async with self.__state._lock:  # pylint: disable=protected-access
             try:
+
                 path = self.__drive.get_image_path()
                 drive_state = _DriveState(
+
                     image=((await self.__storage.make_image_by_path(path)) if path else None),
                     cdrom=self.__drive.get_cdrom_flag(),
                     rw=self.__drive.get_rw_flag(),
                 )
 
+
+                path_partition = self.__drive_partition.get_image_path()
+                drive_state_partition = _DriveState(
+
+                    image=((await self.__storage.make_image_by_path(path_partition)) if path_partition else None),
+                    cdrom=self.__drive_partition.get_cdrom_flag(),
+                    rw=self.__drive_partition.get_rw_flag(),
+                )
+
+
                 await self.__storage.reload()
 
+
                 if self.__state.vd is None and drive_state.image is None:
-                    # Если только что включились и образ не подключен - попробовать
-                    # перемонтировать хранилище (и создать images и meta).
+
                     logger.info("Probing to remount storage ...")
                     await self.__storage.remount_rw(True)
                     await self.__storage.remount_rw(False)
@@ -464,11 +683,12 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 logger.exception("Error while reloading MSD state; switching to offline")
                 self.__state.storage = None
                 self.__state.vd = None
+                self.__state.vd_partition = None
 
             else:
                 self.__state.storage = self.__storage
                 if drive_state.image:
-                    # При подключенном образе виртуальный стейт заменяется реальным
+
                     self.__state.vd = _VirtualDriveState.from_drive_state(drive_state)
                 else:
                     if self.__state.vd is None:
@@ -481,6 +701,16 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                         self.__state.vd.image = None
 
                     self.__state.vd.connected = False
+
+                if drive_state_partition.image:
+                    self.__state.vd_partition = _VirtualDriveState.from_drive_state(drive_state_partition)
+                else:
+                    if self.__state.vd_partition is None:
+                        self.__state.vd_partition = _VirtualDriveState.from_drive_state(drive_state_partition)
+                    image = self.__state.vd_partition.image
+                    if image and (not image.in_storage or not (await image.exists())):
+                        self.__state.vd_partition.image = None
+                    self.__state.vd_partition.connected = False
         if notify:
             self.__notifier.notify()
 

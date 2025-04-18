@@ -64,6 +64,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
     # =====
 
     async def __run(self) -> None:
+        netcfg_diff_times = 0
         logger = get_logger(0)
         logger.info("Probbing the network first time ...")
 
@@ -79,8 +80,8 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
             if retry != 0 and netcfg.ext_ip:
                 logger.info("I'm fine, continue working ...")
 
-            if netcfg != prev_netcfg:
-                logger.info("Got new %s", netcfg)
+            if prev_netcfg is None:
+                logger.info("Initializing Janus with %s ...", netcfg)
                 if netcfg.src_ip:
                     await self.__stop_janus()
                     await self.__start_janus(netcfg)
@@ -88,7 +89,23 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     logger.error("Empty src_ip; stopping Janus ...")
                     await self.__stop_janus()
                 prev_netcfg = netcfg
-
+            elif prev_netcfg != netcfg:
+                if netcfg_diff_times <= 6:
+                    netcfg_diff_times += 1
+                    logger.info("Public IP address changed to %s, original %s, but it's not stable yet, waiting %d seconds ...", netcfg.ext_ip, prev_netcfg.ext_ip, self.__check_interval)
+                    await asyncio.sleep(self.__check_interval)
+                    continue
+                netcfg_diff_times = 0
+                prev_netcfg = netcfg
+                logger.info("Got new %s", netcfg)
+                if netcfg.src_ip:
+                    await self.__stop_janus()
+                    await self.__start_janus(netcfg)
+                else:
+                    logger.error("Empty src_ip; stopping Janus ...")
+                    await self.__stop_janus()
+            else:
+                netcfg_diff_times = 0
             await asyncio.sleep(self.__check_interval)
 
     async def __get_netcfg(self) -> _Netcfg:

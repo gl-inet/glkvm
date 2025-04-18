@@ -23,6 +23,7 @@
 import os
 import contextlib
 import time
+import errno
 
 from typing import AsyncGenerator
 
@@ -85,6 +86,11 @@ class MsdImageExistsError(MsdOperationError):
         super().__init__("This image is already exists")
 
 
+class MsdNoSpaceError(MsdOperationError):
+    def __init__(self) -> None:
+        super().__init__("storage space is insufficient")
+
+
 # =====
 class BaseMsdReader:
     def get_state(self) -> dict:
@@ -140,6 +146,18 @@ class BaseMsd(BasePlugin):
         raise NotImplementedError()
 
     async def set_connected(self, connected: bool) -> None:
+        raise NotImplementedError()
+
+    async def partition_show(self) -> None:
+        raise NotImplementedError()
+
+    async def partition_connect(self,path:str) -> None:
+        raise NotImplementedError()
+
+    async def partition_disconnect(self) -> None:
+        raise NotImplementedError()
+
+    async def partition_format(self) -> None:
         raise NotImplementedError()
 
     @contextlib.asynccontextmanager
@@ -248,20 +266,25 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
     async def write_chunk(self, chunk: bytes) -> int:
         assert self.__file is not None
 
-        await self.__file.write(chunk)  # type: ignore
-        self.__written += len(chunk)
+        try:
+            await self.__file.write(chunk)
+            self.__written += len(chunk)
 
-        self.__unsynced += len(chunk)
-        if self.__unsynced >= self.__sync_size:
-            await self.__sync()
-            self.__unsynced = 0
+            self.__unsynced += len(chunk)
+            if self.__unsynced >= self.__sync_size:
+                await self.__sync()
+                self.__unsynced = 0
 
-        now = time.monotonic()
-        if self.__tick + 1 < now:
-            self.__tick = now
-            self.__notifier.notify()
+            now = time.monotonic()
+            if self.__tick + 1 < now:
+                self.__tick = now
+                self.__notifier.notify()
 
-        return self.__written
+            return self.__written
+        except OSError as e:
+            if e.errno == errno.ENOSPC:
+                raise MsdNoSpaceError()
+            raise
 
     def is_complete(self) -> bool:
         return (self.__written >= self.__file_size)

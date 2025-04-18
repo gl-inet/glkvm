@@ -32,29 +32,42 @@ import dbus_next.errors
 # =====
 class SystemdUnitInfo:
     def __init__(self) -> None:
+
         self.__bus: (dbus_next.aio.MessageBus | None) = None
+
         self.__intr: (dbus_next.introspection.Node | None) = None
+
         self.__manager: (dbus_next.aio.proxy_object.ProxyInterface | None) = None
+
         self.__requested = False
 
     async def get_status(self, name: str) -> tuple[bool, bool]:
+
         assert self.__bus is not None
         assert self.__intr is not None
         assert self.__manager is not None
+
 
         if not name.endswith(".service"):
             name += ".service"
 
         try:
+
             unit_p = await self.__manager.call_get_unit(name)  # type: ignore
+
             unit = self.__bus.get_proxy_object("org.freedesktop.systemd1", unit_p, self.__intr)
+
             unit_props = unit.get_interface("org.freedesktop.DBus.Properties")
+
             started = ((await unit_props.call_get("org.freedesktop.systemd1.Unit", "ActiveState")).value == "active")  # type: ignore
             self.__requested = True
         except dbus_next.errors.DBusError as ex:
+
             if ex.type != "org.freedesktop.systemd1.NoSuchUnit":
                 raise
             started = False
+
+
         enabled = ((await self.__manager.call_get_unit_file_state(name)) in [  # type: ignore
             "enabled",
             "enabled-runtime",

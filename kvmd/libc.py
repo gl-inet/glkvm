@@ -31,12 +31,17 @@ from ctypes import c_uint32
 from ctypes import c_char_p
 from ctypes import c_void_p
 
+import os
 
+static_libc_path = "/lib/libc-2.28.so"
 # =====
 def _load_libc() -> ctypes.CDLL:
     path = ctypes.util.find_library("c")
     if not path:
-        raise RuntimeError("Where is libc?")
+        if os.path.exists(static_libc_path):
+            path = static_libc_path
+        else:
+            raise RuntimeError("Where is libc?")
     assert path
     lib = ctypes.CDLL(path)
     for (name, restype, argtypes) in [

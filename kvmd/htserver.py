@@ -63,18 +63,30 @@ class HttpError(Exception):
 
 
 class UnauthorizedError(HttpError):
-    def __init__(self) -> None:
-        super().__init__("Unauthorized", 401)
+    def __init__(self, msg: str = "Unauthorized") -> None:
+        super().__init__(msg, 401)
+
+
+class BadRequestError(HttpError):
+    def __init__(self, msg: str = "Bad Request") -> None:
+        super().__init__(msg, 400)
 
 
 class ForbiddenError(HttpError):
-    def __init__(self) -> None:
-        super().__init__("Forbidden", 403)
+    def __init__(self, msg: str = "Forbidden") -> None:
+        super().__init__(msg, 403)
 
+class NotFoundError(HttpError):
+    def __init__(self, msg: str = "Not Found") -> None:
+        super().__init__(msg, 404)
+
+class BadGatewayError(HttpError):
+    def __init__(self, msg: str = "Bad Gateway") -> None:
+        super().__init__(msg, 502)
 
 class UnavailableError(HttpError):
-    def __init__(self) -> None:
-        super().__init__("Service Unavailable", 503)
+    def __init__(self, msg: str = "Service Unavailable") -> None:
+        super().__init__(msg, 503)
 
 
 # =====
@@ -292,6 +304,7 @@ class HttpServer:
 
         self.__ws_heartbeat = heartbeat
 
+        get_logger(0).info(f"unix_path: {unix_path}")
         if unix_rm and os.path.exists(unix_path):
             os.remove(unix_path)
         server_socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

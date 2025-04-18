@@ -56,7 +56,7 @@ export function Streamer() {
 		});
 		tools.slider.setOnUpDelayed($("stream-h264-bitrate-slider"), 1000, (value) => __sendParam("h264_bitrate", value));
 
-		tools.slider.setParams($("stream-h264-gop-slider"), 0, 60, 1, 30, function(value) {
+		tools.slider.setParams($("stream-h264-gop-slider"), 0, 240, 1, 30, function(value) {
 			$("stream-h264-gop-value").innerHTML = value;
 		});
 		tools.slider.setOnUpDelayed($("stream-h264-gop-slider"), 1000, (value) => __sendParam("h264_gop", value));

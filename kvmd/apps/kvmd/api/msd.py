@@ -45,6 +45,7 @@ from ....htserver import stream_json
 from ....htserver import stream_json_exception
 
 from ....plugins.msd import BaseMsd
+from ....plugins.msd import MsdNoSpaceError
 
 from ....validators import check_string_in_list
 from ....validators.basic import valid_bool
@@ -52,6 +53,7 @@ from ....validators.basic import valid_int_f0
 from ....validators.basic import valid_float_f01
 from ....validators.net import valid_url
 from ....validators.kvm import valid_msd_image_name
+from ....validators.kvm import valid_msd_mount_name
 
 
 # ======
@@ -70,7 +72,7 @@ class MsdApi:
         params = {
             key: validator(req.query.get(param))
             for (param, key, validator) in [
-                ("image", "name", (lambda arg: str(arg).strip() and valid_msd_image_name(arg))),
+                ("image", "name", (lambda arg: str(arg).strip() and valid_msd_mount_name(arg))),
                 ("cdrom", "cdrom", valid_bool),
                 ("rw", "rw", valid_bool),
             ]
@@ -82,6 +84,40 @@ class MsdApi:
     @exposed_http("POST", "/msd/set_connected")
     async def __set_connected_handler(self, req: Request) -> Response:
         await self.__msd.set_connected(valid_bool(req.query.get("connected")))
+        return make_json_response()
+
+    @exposed_http("GET", "/msd/partition_show")
+    async def __show_partition_handler(self, req: Request) -> Response:
+        devices = await self.__msd.partition_show()
+        return make_json_response({
+            "devices": {
+                path: {
+                    "path": path,
+                    "size": size
+                }
+                for path, size in devices.items()
+            }
+        })
+
+    @exposed_http("GET", "/msd/partition_connect")
+    async def __connect_partition_handler(self, req: Request) -> Response:
+        await self.__msd.partition_connect(req.query.get("path"))
+        return make_json_response()
+
+    @exposed_http("GET", "/msd/partition_disconnect")
+    async def __disconnect_partition_handler(self, req: Request) -> Response:
+        await self.__msd.partition_disconnect()
+        return make_json_response()
+
+    @exposed_http("GET", "/msd/partition_format")
+    async def __format_partition_handler(self, req: Request) -> Response:
+        """
+            format partition /dev/block/by-name/media
+        """
+        try:
+            await self.__msd.partition_format()
+        except Exception as e:
+            return make_json_exception(e, 500)
         return make_json_response()
 
     # =====
@@ -141,14 +177,27 @@ class MsdApi:
         size = valid_int_f0(req.content_length)
         remove_incomplete = self.__get_remove_incomplete(req)
         written = 0
-        async with self.__msd.write_image(name, size, remove_incomplete) as writer:
-            chunk_size = writer.get_chunk_size()
-            while True:
-                chunk = await req.content.read(chunk_size)
-                if not chunk:
-                    break
-                written = await writer.write_chunk(chunk)
-        return make_json_response(self.__make_write_info(name, size, written))
+
+        try:
+
+            state = await self.__msd.get_state()
+            if state.get("storage") and isinstance(state["storage"], dict):
+                free_space = state["storage"].get("free", 0)
+                if size > free_space:
+
+                    get_logger(0).error("file size(%d bytes) is greater than free space(%d bytes)", size, free_space)
+                    raise MsdNoSpaceError()
+
+            async with self.__msd.write_image(name, size, remove_incomplete) as writer:
+                chunk_size = writer.get_chunk_size()
+                while True:
+                    chunk = await req.content.read(chunk_size)
+                    if not chunk:
+                        break
+                    written = await writer.write_chunk(chunk)
+            return make_json_response(self.__make_write_info(name, size, written))
+        except MsdNoSpaceError as ex:
+            return make_json_exception(ex, 507)
 
     @exposed_http("POST", "/msd/write_remote")
     async def __write_remote_handler(self, req: Request) -> (Response | StreamResponse):  # pylint: disable=too-many-locals
@@ -181,6 +230,15 @@ class MsdApi:
 
                 size = valid_int_f0(remote.content_length)
 
+
+                state = await self.__msd.get_state()
+                if state.get("storage") and isinstance(state["storage"], dict):
+                    free_space = state["storage"].get("free", 0)
+                    if size > free_space:
+
+                        get_logger(0).error("file size(%d bytes) is greater than free space(%d bytes)", size, free_space)
+                        raise MsdNoSpaceError()
+
                 get_logger(0).info("Downloading image %r as %r to MSD ...", url, name)
                 async with self.__msd.write_image(name, size, remove_incomplete) as writer:
                     chunk_size = writer.get_chunk_size()
@@ -197,6 +255,12 @@ class MsdApi:
                 await stream_write_info()
                 return response
 
+        except MsdNoSpaceError as ex:
+            if response is not None:
+                await stream_write_info()
+                await stream_json_exception(response, ex)
+                return response
+            return make_json_exception(ex, 507)
         except Exception as ex:
             if response is not None:
                 await stream_write_info()

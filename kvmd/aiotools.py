@@ -165,8 +165,8 @@ def create_deadly_task(name: str, coro: Coroutine) -> asyncio.Task:
             raise RuntimeError(f"Deadly task is dead: {name}")
         except asyncio.CancelledError:
             pass
-        except Exception:
-            logger.exception("Unhandled exception in deadly task, killing myself ...")
+        except Exception as e:
+            logger.exception(f"Unhandled exception in deadly task, killing myself: {str(e)} ...")
             pid = os.getpid()
             if pid == 1:
                 os._exit(1)  # Docker workaround  # pylint: disable=protected-access

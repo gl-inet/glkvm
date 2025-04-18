@@ -149,6 +149,15 @@ class _GadgetConfig:
             _symlink(func_path, join(self.__profile_path, func))
         self.__create_meta(func, "Ethernet")
 
+
+    def add_rndis(self, start: bool) -> None:
+        func = "rndis.usb0"
+        func_path = join(self.__gadget_path, "functions", func)
+        _mkdir(func_path)
+        if start:
+            _symlink(func_path, join(self.__profile_path, func))
+        self.__create_meta(func, "RNDIS")
+
     def add_keyboard(self, start: bool, remote_wakeup: bool) -> None:
         self.__add_hid("Keyboard", start, remote_wakeup, make_keyboard_hid())
 
@@ -173,23 +182,34 @@ class _GadgetConfig:
         self.__hid_instance += 1
 
     def add_msd(self, start: bool, user: str, stall: bool, cdrom: bool, rw: bool, removable: bool, fua: bool) -> None:
-        func = f"mass_storage.usb{self.__msd_instance}"
+
+        func = f"mass_storage.{self.__msd_instance}"
         func_path = join(self.__gadget_path, "functions", func)
         _mkdir(func_path)
+
+
         _write(join(func_path, "stall"), int(stall))
         _write(join(func_path, "lun.0/cdrom"), int(cdrom))
         _write(join(func_path, "lun.0/ro"), int(not rw))
         _write(join(func_path, "lun.0/removable"), int(removable))
         _write(join(func_path, "lun.0/nofua"), int(not fua))
+
+
         if user != "root":
             _chown(join(func_path, "lun.0/cdrom"), user)
             _chown(join(func_path, "lun.0/ro"), user)
             _chown(join(func_path, "lun.0/file"), user)
             _chown(join(func_path, "lun.0/forced_eject"), user)
+
+
         if start:
             _symlink(func_path, join(self.__profile_path, func))
+
+
         name = ("Mass Storage Drive" if self.__msd_instance == 0 else f"Extra Drive #{self.__msd_instance}")
         self.__create_meta(func, name)
+
+
         self.__msd_instance += 1
 
     def __create_meta(self, func: str, name: str) -> None:
@@ -255,6 +275,10 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         logger.info("===== Ethernet =====")
         gc.add_ethernet(**cod.ethernet._unpack(ignore=["enabled"]))
 
+    if cod.rndis.enabled:
+        logger.info("===== RNDIS =====")
+        gc.add_rndis(cod.rndis.start)
+
     if config.kvmd.hid.type == "otg":
         logger.info("===== HID-Keyboard =====")
         gc.add_keyboard(cod.hid.keyboard.start, config.otg.remote_wakeup)
@@ -266,7 +290,14 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
 
     if config.kvmd.msd.type == "otg":
         logger.info("===== MSD =====")
-        gc.add_msd(cod.msd.start, config.otg.user, **cod.msd.default._unpack())
+        logger.info("===== MSD Extra:=====", cod.drives.default._unpack())
+
+        if cod.msd.default.cdrom:
+            gc.add_msd(cod.msd.start, config.otg.user, **cod.msd.default._unpack())
+        else:
+            gc.add_msd(cod.msd.start, config.otg.user, stall=False, cdrom=True, rw=False, removable=True, fua=True)
+
+        gc.add_msd(cod.msd.start, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True)
         if cod.drives.enabled:
             for count in range(cod.drives.count):
                 logger.info("===== MSD Extra: %d =====", count + 1)
@@ -322,6 +353,7 @@ def _cmd_stop(config: Section) -> None:
 
 # =====
 def main(argv: (list[str] | None)=None) -> None:
+
     (parent_parser, argv, config) = init(
         add_help=False,
         argv=argv,
@@ -329,22 +361,34 @@ def main(argv: (list[str] | None)=None) -> None:
         load_atx=True,
         load_msd=True,
     )
+
+
     parser = argparse.ArgumentParser(
         prog="kvmd-otg",
         description="Control KVMD OTG device",
         parents=[parent_parser],
     )
+
+
     parser.set_defaults(cmd=(lambda *_: parser.print_help()))
+
+
     subparsers = parser.add_subparsers()
+
 
     cmd_start_parser = subparsers.add_parser("start", help="Start OTG")
     cmd_start_parser.set_defaults(cmd=_cmd_start)
 
+
     cmd_stop_parser = subparsers.add_parser("stop", help="Stop OTG")
     cmd_stop_parser.set_defaults(cmd=_cmd_stop)
 
+
     options = parser.parse_args(argv[1:])
+
+
     try:
         options.cmd(config)
     except ValidatorError as ex:
+
         raise SystemExit(str(ex))

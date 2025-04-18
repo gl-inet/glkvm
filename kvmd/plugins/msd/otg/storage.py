@@ -31,6 +31,7 @@ from typing import Optional
 import aiofiles
 import aiofiles.os
 
+from ....logging import get_logger
 from .... import aiotools
 from .... import aiohelpers
 
@@ -155,6 +156,7 @@ class _Part(_PartDc):
         super().__init__(name)
         self.__path = path
 
+
     async def _reload(self) -> None:  # Only for Storage()
         st = await aiotools.run_async(os.statvfs, self.__path)
         if self.name == "":
@@ -212,6 +214,8 @@ class Storage(_StorageDc):
         watchable_paths: list[str] = []
         images: dict[str, Image] = {}
         parts: dict[str, _Part] = {}
+
+
         for (root_path, is_part, files) in (await aiotools.run_async(self.__walk)):
             watchable_paths.append(root_path)
             for path in files:

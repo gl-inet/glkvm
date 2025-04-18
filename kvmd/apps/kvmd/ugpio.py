@@ -295,10 +295,15 @@ class UserGpio:
 
     async def systask(self) -> None:
         get_logger(0).info("Running User-GPIO drivers ...")
-        await asyncio.gather(*[
-            driver.run()
-            for (_, driver) in tools.sorted_kvs(self.__drivers)
-        ])
+        for i in self.__drivers:
+            get_logger(0).info(f"Running User-GPIO driver: {i}")
+        if self.__drivers:
+            await asyncio.gather(*[
+                driver.run()
+                for (_, driver) in tools.sorted_kvs(self.__drivers)
+            ])
+        else:
+            await aiotools.wait_infinite()
 
     async def cleanup(self) -> None:
         for driver in self.__drivers.values():

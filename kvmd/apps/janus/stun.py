@@ -8,6 +8,7 @@ import enum
 
 from ... import tools
 from ... import aiotools
+from .pystun3 import get_ip_info
 
 from ...logging import get_logger
 
@@ -87,12 +88,26 @@ class Stun:
                 # On new IP, changed family, etc.
                 self.__stun_ip = stun_ips[0]
 
+            '''
             with socket.socket(src_fam, socket.SOCK_DGRAM) as self.__sock:
                 self.__sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 self.__sock.settimeout(self.__timeout)
                 self.__sock.bind(src_addr)
                 (nat_type, resp) = await self.__get_nat_type(src_ip)
                 ext_ip = (resp.ext.ip if resp.ext is not None else "")
+            '''
+
+            _nat_type, ext_ip, ext_port = get_ip_info(stun_host=self.__host, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
+
+            value_to_member_map = {member.value: member for member in StunNatType}
+            nat_type = value_to_member_map.get(_nat_type)
+
+            if nat_type is None:
+                nat_type = ""
+                get_logger(0).error("StunNatType value to member map error!")
+
+
+
         except Exception as ex:
             get_logger(0).error("Can't get STUN info: %s", tools.efmt(ex))
         finally:

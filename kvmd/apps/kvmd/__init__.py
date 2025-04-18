@@ -25,8 +25,10 @@ from ...logging import get_logger
 from ...plugins.hid import get_hid_class
 from ...plugins.atx import get_atx_class
 from ...plugins.msd import get_msd_class
+from .api.rndis import RndisApi
+from .api.upgrade import UpgradeApi
 
-from .. import init
+from .. import init as init_func
 
 from .auth import AuthManager
 from .info import InfoManager
@@ -36,15 +38,15 @@ from .streamer import Streamer
 from .snapshoter import Snapshoter
 from .ocr import Ocr
 from .server import KvmdServer
-
+from .init import InitManager
 
 # =====
 def main(argv: (list[str] | None)=None) -> None:
-    config = init(
+    config = init_func(
         prog="kvmd",
         description="The main PiKVM daemon",
         argv=argv,
-        check_run=True,
+        check_run=False,
         load_auth=True,
         load_hid=True,
         load_atx=True,
@@ -86,6 +88,7 @@ def main(argv: (list[str] | None)=None) -> None:
 
             totp_secret_path=config.auth.totp.secret.file,
         ),
+        init_manager=InitManager(),
         info_manager=InfoManager(global_config),
         log_reader=(LogReader() if config.log_reader.enabled else None),
         user_gpio=UserGpio(config.gpio, global_config.otg),
@@ -94,6 +97,8 @@ def main(argv: (list[str] | None)=None) -> None:
         hid=hid,
         atx=get_atx_class(config.atx.type)(**config.atx._unpack(ignore=["type"])),
         msd=get_msd_class(config.msd.type)(**msd_kwargs),
+        rndis=RndisApi(),
+        upgrade = UpgradeApi(),
         streamer=streamer,
 
         snapshoter=Snapshoter(

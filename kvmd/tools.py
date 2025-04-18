@@ -65,7 +65,7 @@ def swapped_kvs(dct: dict[_DictKeyT, _DictValueT]) -> dict[_DictValueT, _DictKey
 
 # =====
 def clear_queue(q: multiprocessing.queues.Queue) -> None:  # pylint: disable=invalid-name
-    for _ in range(q.qsize()):
+    while not q.empty():
         try:
             q.get_nowait()
         except queue.Empty:

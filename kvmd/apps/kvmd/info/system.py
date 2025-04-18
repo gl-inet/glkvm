@@ -57,15 +57,20 @@ class SystemInfoSubmanager(BaseInfoSubmanager):
         features: dict[str, bool] = {}
         try:
             path = self.__streamer_cmd[0]
-            ((_, version), (_, features_text)) = await asyncio.gather(
-                aioproc.read_process([path, "--version"], err_to_null=True),
-                aioproc.read_process([path, "--features"], err_to_null=True),
-            )
+
+
+
+
+
+
+            version = "6.13"
+            features_text = "- WITH_GPIO\n- WITH_SYSTEMD\n- WITH_PTHREAD_NP\n+ WITH_SETPROCTITLE\n+ HAS_PDEATHSIG"
         except Exception:
             get_logger(0).exception("Can't get streamer info")
         else:
             try:
                 for line in features_text.split("\n"):
+
                     (status, name) = map(str.strip, line.split(" "))
                     features[name] = (status == "+")
             except Exception:

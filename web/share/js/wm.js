@@ -145,10 +145,10 @@ function __WindowManager() {
 	/************************************************************************/
 
 	self.copyTextToClipboard = function(text) {
-		let workaround = function(ex) {
+		let workaround = function(err) {
 			// https://stackoverflow.com/questions/60317969/document-execcommandcopy-not-working-even-though-the-dom-element-is-created
 			let callback = function() {
-				tools.error("copyTextToClipboard(): navigator.clipboard.writeText() is not working:", ex);
+				tools.error("copyTextToClipboard(): navigator.clipboard.writeText() is not working:", err);
 				tools.info("copyTextToClipboard(): Trying a workaround...");
 
 				let el = document.createElement("textarea");
@@ -164,16 +164,16 @@ function __WindowManager() {
 				el.setSelectionRange(0, el.value.length); // iOS
 
 				try {
-					ex = (document.execCommand("copy") ? null : "Unknown error");
-				} catch (ex) { // eslint-disable-line no-unused-vars
+					err = (document.execCommand("copy") ? null : "Unknown error");
+				} catch (err) { // eslint-disable-line no-empty
 				}
 
 				// Remove the added textarea again:
 				document.body.removeChild(el);
 
-				if (ex) {
-					tools.error("copyTextToClipboard(): Workaround failed:", ex);
-					wm.error("Can't copy text to the clipboard:<br>", ex);
+				if (err) {
+					tools.error("copyTextToClipboard(): Workaround failed:", err);
+					wm.error("Can't copy text to the clipboard:<br>", err);
 				}
 			};
 			__modalDialog("Info", "Press OK to copy the text to the clipboard", true, false, callback);
@@ -181,8 +181,8 @@ function __WindowManager() {
 		if (navigator.clipboard) {
 			navigator.clipboard.writeText(text).then(function() {
 				wm.info("The text has been copied to the clipboard");
-			}, function(ex) {
-				workaround(ex);
+			}, function(err) {
+				workaround(err);
 			});
 		} else {
 			workaround("navigator.clipboard is not available");
@@ -414,7 +414,7 @@ function __WindowManager() {
 		for (let el_window of $$("window")) {
 			if (el_window.style.visibility === "visible") {
 				if (tools.browser.is_mobile && el_window.classList.contains("window-resizable")) {
-					// FIXME: При смене ориентации на мобильном браузере надо сбрасывать
+					// FIXME: При смене ориент��ции на мо��ильном браузере надо сбрасывать
 					// настройки окна стрима, поэтому тут стоит вот этот костыль
 					el_window.style.width = "";
 					el_window.style.height = "";
@@ -614,6 +614,11 @@ function __WindowManager() {
 	var __fullScreenWindow = function(el_window) {
 		el_window.before_full_screen = el_window.getBoundingClientRect();
 		__getFullScreenFunction(el_window).call(el_window);
+
+		// 先显示退出全屏快捷键提示
+		__modalDialog("Fullscreen Mode", "<b>Press Alt+` to exit fullscreen mode</b>", true, false, null, el_window);
+
+		// 然后再处理 keyboard lock 相关的提示
 		if (navigator.keyboard && navigator.keyboard.lock) {
 			navigator.keyboard.lock();
 		} else {
@@ -648,6 +653,21 @@ function __WindowManager() {
 		}
 		return null;
 	};
+
+	// 添加 Alt+` 键处理
+	document.addEventListener('keydown', function(event) {
+		if (event.key === '`' && event.altKey && document.fullscreenElement) {
+			if (document.exitFullscreen) {
+				document.exitFullscreen();
+			} else if (document.webkitExitFullscreen) {
+				document.webkitExitFullscreen();
+			} else if (document.mozCancelFullScreen) {
+				document.mozCancelFullScreen();
+			} else if (document.msExitFullscreen) {
+				document.msExitFullscreen();
+			}
+		}
+	});
 
 	__init__();
 }

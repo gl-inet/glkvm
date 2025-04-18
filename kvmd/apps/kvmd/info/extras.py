@@ -79,14 +79,36 @@ class ExtrasInfoSubmanager(BaseInfoSubmanager):
             return {}
 
     async def __rewrite_app_daemon(self, sui: (sysunit.SystemdUnitInfo | None), extra: dict) -> None:
+
         daemon = extra.get("daemon", "")
+
+
+
+        print("=============" + daemon + "===============")
+
+
         if isinstance(daemon, str) and daemon.strip():
+
             extra["enabled"] = extra["started"] = False
+
             if sui is not None:
                 try:
+
                     (extra["enabled"], extra["started"]) = await sui.get_status(daemon)
+
+
+
+
+
                 except Exception as ex:
-                    get_logger(0).error("Can't get info about the service %r: %s", daemon, tools.efmt(ex))
+
+                    get_logger(0).error("无法获取服务 %r 的信息: %s", daemon, tools.efmt(ex))
+            else:
+
+                if "vnc" in daemon or "ipmi" in daemon:
+                    extra["enabled"] = extra["started"] = False
+                else:
+                    extra["enabled"] = extra["started"] = True
 
     def __rewrite_app_port(self, extra: dict) -> None:
         port_path = extra.get("port", "")

@@ -40,6 +40,22 @@ def valid_atx_button(arg: Any) -> str:
     return check_string_in_list(arg, "ATX button", ["power", "power_long", "reset"])
 
 
+
+
+def valid_msd_mount_name(arg: Any) -> str:
+    name = "MSD mount name"
+    arg = valid_stripped_string_not_empty(arg, name)
+    parts: list[str] = list(filter(None, arg.split("/")))
+    if len(parts) == 0:
+        raise_error(arg, name)
+    for (index, part) in enumerate(list(parts)):
+        parts[index] = valid_printable_filename(part, name=name)
+
+    if arg.startswith("/"):
+        return "/" + "/".join(parts)
+    return "/".join(parts)
+
+
 def valid_msd_image_name(arg: Any) -> str:
     name = "MSD image name"
     arg = valid_stripped_string_not_empty(arg, name)
@@ -87,4 +103,4 @@ def valid_stream_h264_bitrate(arg: Any) -> int:
 
 
 def valid_stream_h264_gop(arg: Any) -> int:
-    return int(valid_number(arg, min=0, max=60, name="stream H264 GOP"))
+    return int(valid_number(arg, min=0, max=240, name="stream H264 GOP"))

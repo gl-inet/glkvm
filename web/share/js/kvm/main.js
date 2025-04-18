@@ -56,5 +56,6 @@ export function main() {
 		wm.showWindow($("stream-window"));
 
 		new Session();
+
 	}
 }

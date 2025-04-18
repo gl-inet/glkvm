@@ -28,12 +28,17 @@ from typing import Generator
 from .keysym import SymmapModifiers
 from .mappings import WebModifiers
 
+import os
 
+static_libxkbcommon_path = "/usr/lib/libxkbcommon.so.0.0.0"
 # =====
 def _load_libxkbcommon() -> ctypes.CDLL:
     path = ctypes.util.find_library("xkbcommon")
     if not path:
-        raise RuntimeError("Where is libxkbcommon?")
+        if os.path.exists(static_libxkbcommon_path):
+            path = static_libxkbcommon_path
+        else:
+            raise RuntimeError("Where is libxkbcommon?")
     assert path
     lib = ctypes.CDLL(path)
     for (name, restype, argtypes) in [

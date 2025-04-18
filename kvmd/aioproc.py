@@ -91,23 +91,59 @@ async def log_stdout_infinite(proc: asyncio.subprocess.Process, logger: logging.
 async def kill_process(proc: asyncio.subprocess.Process, wait: float, logger: logging.Logger) -> None:  # pylint: disable=no-member
     if proc.returncode is None:
         try:
+
+            logger.debug("Terminating process pid=%d", proc.pid)
             proc.terminate()
-            await asyncio.sleep(wait)
+
+
+            try:
+                await asyncio.wait_for(proc.wait(), wait)
+                logger.info("Process terminated: retcode=%d", proc.returncode)
+                return
+            except asyncio.TimeoutError:
+                logger.warning("Process termination timed out after %.1f seconds, sending SIGKILL", wait)
+
+
             if proc.returncode is None:
                 try:
+                    logger.debug("Killing process group pgid=%d", os.getpgid(proc.pid))
                     os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                except Exception:
-                    if proc.returncode is not None:
-                        raise
-            await proc.wait()
-            logger.info("Process killed: retcode=%d", proc.returncode)
+
+
+                    try:
+                        await asyncio.wait_for(proc.wait(), wait)
+                    except asyncio.TimeoutError:
+                        logger.error("Process still alive after SIGKILL and %.1f seconds wait, giving up", wait)
+                        return
+                except ProcessLookupError:
+
+                    pass
+                except Exception as e:
+                    logger.exception("Error sending SIGKILL to process group: %s", str(e))
+
+                    if proc.returncode is None:
+                        try:
+                            os.kill(proc.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        except Exception:
+                            logger.exception("Can't kill process pid=%d directly", proc.pid)
+
+
+            if proc.returncode is not None:
+                logger.info("Process killed: retcode=%d", proc.returncode)
+            else:
+
+                try:
+                    await asyncio.wait_for(proc.wait(), wait)
+                    logger.info("Process killed: retcode=%d", proc.returncode)
+                except asyncio.TimeoutError:
+                    logger.error("Failed to kill process pid=%d after multiple attempts", proc.pid)
         except asyncio.CancelledError:
+
             pass
         except Exception:
-            if proc.returncode is None:
-                logger.exception("Can't kill process pid=%d", proc.pid)
-            else:
-                logger.info("Process killed: retcode=%d", proc.returncode)
+            logger.exception("Unexpected error while killing process pid=%d", proc.pid)
 
 
 def rename_process(suffix: str, prefix: str="kvmd") -> None:

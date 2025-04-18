@@ -50,6 +50,29 @@ def _get_htpasswd_path(config: Section) -> str:
 
 
 @contextlib.contextmanager
+def _get_htpasswd_for_write_from_file(path: str) -> Generator[passlib.apache.HtpasswdFile, None, None]:
+    (tmp_fd, tmp_path) = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.",
+        dir=os.path.dirname(path),
+    )
+    try:
+        try:
+            st = os.stat(path)
+            with open(path, "rb") as file:
+                os.write(tmp_fd, file.read())
+                os.fchown(tmp_fd, st.st_uid, st.st_gid)
+                os.fchmod(tmp_fd, st.st_mode)
+        finally:
+            os.close(tmp_fd)
+        htpasswd = passlib.apache.HtpasswdFile(tmp_path)
+        yield htpasswd
+        htpasswd.save()
+        os.rename(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+@contextlib.contextmanager
 def _get_htpasswd_for_write(config: Section) -> Generator[passlib.apache.HtpasswdFile, None, None]:
     path = _get_htpasswd_path(config)
     (tmp_fd, tmp_path) = tempfile.mkstemp(

@@ -90,6 +90,7 @@ class AuthManager:
         assert self.__enabled
         assert self.__internal_service
 
+
         if self.__totp_secret_path:
             with open(self.__totp_secret_path) as file:
                 secret = file.read().strip()

@@ -62,6 +62,9 @@ export function Msd() {
 		tools.el.setOnClick($("msd-connect-button"), () => __clickConnectButton(true));
 		tools.el.setOnClick($("msd-disconnect-button"), () => __clickConnectButton(false));
 
+		tools.el.setOnClick($("msd-attach-thumbdrive-button"), __clickAttachThumbdriveButton);
+		tools.el.setOnClick($("msd-detach-thumbdrive-button"), __clickDetachThumbdriveButton);
+
 		tools.el.setOnClick($("msd-reset-button"), __clickResetButton);
 	};
 
@@ -313,6 +316,9 @@ export function Msd() {
 			$("msd-new-url").value = "";
 			tools.progress.setValue($("msd-uploading-progress"), "", 0);
 		}
+
+		tools.el.setEnabled($("msd-attach-thumbdrive-button"), (online && !s.drive_partition.connected && !s.busy));
+		tools.el.setEnabled($("msd-detach-thumbdrive-button"), (online && s.drive_partition.connected && !s.busy));
 	};
 
 	var __applyStateStatus = function() {
@@ -378,6 +384,22 @@ export function Msd() {
 		dt = new Date(dt.getTime() - (dt.getTimezoneOffset() * 60000));
 		info += " \u2500 " + dt.toISOString().slice(0, -8).replaceAll("-", ".").replace("T", "-");
 		return info;
+	};
+
+	var __clickAttachThumbdriveButton = function() {
+		tools.httpGet("/api/msd/partition_connect?path=/dev/block/by-name/media", function(http) {
+			if (http.status != 200) {
+				wm.error("无法挂载分区:<br>", http.responseText);
+			}
+		});
+	};
+
+	var __clickDetachThumbdriveButton = function() {
+		tools.httpGet("/api/msd/partition_disconnect", function(http) {
+			if (http.status != 200) {
+				wm.error("无法卸载分区:<br>", http.responseText);
+			}
+		});
 	};
 
 	__init__();

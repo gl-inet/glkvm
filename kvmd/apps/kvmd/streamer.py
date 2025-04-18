@@ -304,6 +304,9 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
                 async with session.get(self.__make_url("state")) as response:
                     htclient.raise_not_200(response)
                     streamer_state = (await response.json())["result"]
+
+
+
             except (aiohttp.ClientConnectionError, aiohttp.ServerConnectionError):
                 pass
             except Exception:

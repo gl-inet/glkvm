@@ -45,7 +45,9 @@ from ...errors import OperationError
 
 from ... import libc
 from ... import aiotools
+import os
 
+static_libtesseract_path = "/usr/lib/libtesseract.so.3.0.5"
 
 # =====
 class OcrError(OperationError):
@@ -61,7 +63,10 @@ def _load_libtesseract() -> (ctypes.CDLL | None):
     try:
         path = ctypes.util.find_library("tesseract")
         if not path:
-            raise RuntimeError("Can't find libtesseract")
+            if os.path.exists(static_libtesseract_path):
+                path = static_libtesseract_path
+            else:
+                raise RuntimeError("Can't find libtesseract")
         lib = ctypes.CDLL(path)
         for (name, restype, argtypes) in [
             ("TessBaseAPICreate", POINTER(_TessBaseAPI), []),

@@ -30,10 +30,11 @@ import {Recorder} from "./recorder.js";
 import {Hid} from "./hid.js";
 import {Atx} from "./atx.js";
 import {Msd} from "./msd.js";
+import {Rndis} from "./rndis.js";
 import {Streamer} from "./stream.js";
 import {Gpio} from "./gpio.js";
 import {Ocr} from "./ocr.js";
-
+import {Upgrade} from "./upgrade.js";
 
 export function Session() {
 	// var self = this;
@@ -50,6 +51,9 @@ export function Session() {
 	var __hid = new Hid(__streamer.getGeometry, __recorder);
 	var __atx = new Atx(__recorder);
 	var __msd = new Msd();
+	var __rndis = new Rndis();
+	const upgrade = new Upgrade();
+	upgrade.init();
 	var __gpio = new Gpio(__recorder);
 	var __ocr = new Ocr(__streamer.getGeometry);
 

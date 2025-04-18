@@ -323,13 +323,13 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __orient, _
 
 				// FIXME: Задержка уменьшается, но начинаются заикания на кейфреймах.
 				//   - https://github.com/Glimesh/janus-ftl-plugin/issues/101
-				/*if (__handle && __handle.webrtcStuff && __handle.webrtcStuff.pc) {
+				if (__handle && __handle.webrtcStuff && __handle.webrtcStuff.pc) {
 					for (let receiver of __handle.webrtcStuff.pc.getReceivers()) {
 						if (receiver.track && receiver.track.kind === "video" && receiver.playoutDelayHint !== undefined) {
 							receiver.playoutDelayHint = 0;
 						}
 					}
-				}*/
+				}
 			},
 
 			"oncleanup": function() {
@@ -393,6 +393,7 @@ export function JanusStreamer(__setActive, __setInactive, __setInfo, __orient, _
 			__handle.send({"message": {"request": "watch", "params": {
 				"orientation": __orient,
 				"audio": __allow_audio,
+				"video": true,
 			}}});
 		}
 	};

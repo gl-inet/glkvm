@@ -115,8 +115,10 @@ def init(
     **load: bool,
 ) -> tuple[argparse.ArgumentParser, list[str], Section]:
 
+
     argv = (argv or sys.argv)
     assert len(argv) > 0
+
 
     parser = argparse.ArgumentParser(
         prog=(prog or argv[0]),
@@ -124,16 +126,22 @@ def init(
         add_help=add_help,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
+
     parser.add_argument("-c", "--config", default="/etc/kvmd/main.yaml", type=valid_abs_file,
-                        help="Set config file path", metavar="<file>")
+                        help="设置配置文件路径", metavar="<file>")
+
     parser.add_argument("-o", "--set-options", default=[], nargs="+",
-                        help="Override config options list (like sec/sub/opt=value)", metavar="<k=v>",)
+                        help="覆盖配置选项列表（格式如 sec/sub/opt=value）", metavar="<k=v>",)
+
     parser.add_argument("-m", "--dump-config", action="store_true",
-                        help="View current configuration (include all overrides)")
+                        help="查看当前配置（包括所有覆盖）")
+
     if check_run:
         parser.add_argument("--run", dest="run", action="store_true",
-                            help="Run the service")
+                            help="运行服务")
+
     (options, remaining) = parser.parse_known_args(argv)
+
 
     if options.dump_config:
         _dump_config(_init_config(
@@ -146,7 +154,9 @@ def init(
             load_gpio=True,
         ))
         raise SystemExit()
+
     config = _init_config(options.config, options.set_options, **load)
+
 
     logging.captureWarnings(True)
     logging.config.dictConfig(config.logging)
@@ -156,38 +166,51 @@ def init(
             style="{",
         ))
 
+
     if check_run and not options.run:
         raise SystemExit(
-            "To prevent accidental startup, you must specify the --run option to start.\n"
-            "Try the --help option to find out what this service does.\n"
-            "Make sure you understand exactly what you are doing!"
+            "为防止意外启动，您必须指定 --run 选项来启动。\n"
+            "尝试使用 --help 选项来了解此服务的功能。\n"
+            "请确保您完全理解您正在做什么！"
         )
+
 
     return (parser, remaining, config)
 
 
 # =====
 def _init_config(config_path: str, override_options: list[str], **load_flags: bool) -> Section:
+
     config_path = os.path.expanduser(config_path)
     try:
+
         raw_config: dict = load_yaml_file(config_path)
     except Exception as ex:
-        raise SystemExit(f"ConfigError: Can't read config file {config_path!r}:\n{tools.efmt(ex)}")
+
+        raise SystemExit(f"ConfigError: 无法读取配置文件 {config_path!r}:\n{tools.efmt(ex)}")
     if not isinstance(raw_config, dict):
-        raise SystemExit(f"ConfigError: Top-level of the file {config_path!r} must be a dictionary")
+
+        raise SystemExit(f"ConfigError: 文件 {config_path!r} 的顶层必须是字典")
+
 
     scheme = _get_config_scheme()
     try:
+
         yaml_merge(raw_config, (raw_config.pop("override", {}) or {}))
+
         yaml_merge(raw_config, build_raw_from_options(override_options), "raw CLI options")
+
         _patch_raw(raw_config)
+
         config = make_config(raw_config, scheme)
+
 
         if _patch_dynamic(raw_config, config, scheme, **load_flags):
             config = make_config(raw_config, scheme)
 
         return config
     except (ConfigError, UnknownPluginError) as ex:
+
         raise SystemExit(f"ConfigError: {ex}")
 
 
@@ -373,7 +396,7 @@ def _get_config_scheme() -> dict:
 
                 "totp": {
                     "secret": {
-                        "file": Option("/etc/kvmd/totp.secret", type=valid_abs_path, if_empty=""),
+                        "file": Option("/etc/kvmd/user/totp.secret", type=valid_abs_path, if_empty=""),
                     },
                 },
             },
@@ -382,8 +405,8 @@ def _get_config_scheme() -> dict:
                 "meta":   Option("/etc/kvmd/meta.yaml",    type=valid_abs_file),
                 "extras": Option("/usr/share/kvmd/extras", type=valid_abs_dir),
                 "hw": {
-                    "platform":      Option("/usr/share/kvmd/platform", type=valid_abs_file, unpack_as="platform_path"),
-                    "vcgencmd_cmd":  Option(["/usr/bin/vcgencmd"], type=valid_command),
+
+
                     "ignore_past":   Option(False, type=valid_bool),
                     "state_poll":    Option(5.0,   type=valid_float_f01),
                 },
@@ -466,7 +489,7 @@ def _get_config_scheme() -> dict:
                 "h264_gop": {
                     "default": Option(30, type=valid_stream_h264_gop, unpack_as="h264_gop"),
                     "min":     Option(0,  type=valid_stream_h264_gop, unpack_as="h264_gop_min"),
-                    "max":     Option(60, type=valid_stream_h264_gop, unpack_as="h264_gop_max"),
+                    "max":     Option(240, type=valid_stream_h264_gop, unpack_as="h264_gop_max"),
                 },
 
                 "unix":    Option("/run/kvmd/ustreamer.sock", type=valid_abs_path, unpack_as="unix_path"),
@@ -532,28 +555,28 @@ def _get_config_scheme() -> dict:
             "ro_cleanup_delay": Option(3.0,  type=valid_float_f01),
 
             "remount_cmd": Option([
-                "/usr/bin/sudo", "--non-interactive",
-                "/usr/bin/kvmd-helper-pst-remount", "{mode}",
+                "/bin/mount",
+                "-o", "remount,${mode}",
             ], type=valid_command),
         },
 
         "otg": {
             "vendor_id":      Option(0x1D6B, type=valid_otg_id),  # Linux Foundation
             "product_id":     Option(0x0104, type=valid_otg_id),  # Multifunction Composite Gadget
-            "manufacturer":   Option("PiKVM", type=valid_stripped_string),
+            "manufacturer":   Option("GLKVM", type=valid_stripped_string),
             "product":        Option("Composite KVM Device", type=valid_stripped_string),
             "serial":         Option("CAFEBABE", type=valid_stripped_string, if_none=None),
             "device_version": Option(-1,     type=functools.partial(valid_number, min=-1, max=0xFFFF)),
             "usb_version":    Option(0x0200, type=valid_otg_id),
             "max_power":      Option(250,    type=functools.partial(valid_number, min=50, max=500)),
-            "remote_wakeup":  Option(False,  type=valid_bool),
+            "remote_wakeup":  Option(True,  type=valid_bool),
 
-            "gadget":     Option("kvmd", type=valid_otg_gadget),
-            "config":     Option("PiKVM device", type=valid_stripped_string_not_empty),
+            "gadget":     Option("rockchip", type=valid_otg_gadget),
+            "config":     Option("GLKVM device", type=valid_stripped_string_not_empty),
             "udc":        Option("",     type=valid_stripped_string),
             "init_delay": Option(3.0,    type=valid_float_f01),
 
-            "user": Option("kvmd", type=valid_user),
+            "user": Option("root", type=valid_user),
             "meta": Option("/run/kvmd/otg", type=valid_abs_path),
 
             "devices": {
@@ -570,8 +593,8 @@ def _get_config_scheme() -> dict:
                     "start": Option(True, type=valid_bool),
                     "default": {
                         "stall":     Option(False, type=valid_bool),
-                        "cdrom":     Option(True,  type=valid_bool),
-                        "rw":        Option(False, type=valid_bool),
+                        "cdrom":     Option(False,  type=valid_bool),
+                        "rw":        Option(True, type=valid_bool),
                         "removable": Option(True,  type=valid_bool),
                         "fua":       Option(True,  type=valid_bool),
                     },
@@ -588,6 +611,11 @@ def _get_config_scheme() -> dict:
                     "driver":   Option("ecm", type=valid_otg_ethernet),
                     "host_mac": Option("",    type=valid_mac, if_empty=""),
                     "kvm_mac":  Option("",    type=valid_mac, if_empty=""),
+                },
+
+                "rndis": {
+                    "enabled": Option(True, type=valid_bool),
+                    "start":   Option(True,  type=valid_bool),
                 },
 
                 "drives": {
@@ -608,7 +636,7 @@ def _get_config_scheme() -> dict:
         "otgnet": {
             "iface": {
                 "net":    Option("172.30.30.0/24", type=functools.partial(valid_net, v6=False)),
-                "ip_cmd": Option(["/usr/bin/ip"],  type=valid_command),
+                "ip_cmd": Option(["/sbin/ip"],  type=valid_command),
             },
 
             "firewall": {
@@ -624,29 +652,31 @@ def _get_config_scheme() -> dict:
                 "pre_start_cmd_remove": Option([], type=valid_options),
                 "pre_start_cmd_append": Option([], type=valid_options),
 
-                "post_start_cmd": Option([
-                    "/usr/bin/systemd-run",
-                    "--unit=kvmd-otgnet-dnsmasq",
-                    "/usr/sbin/dnsmasq",
-                    "--conf-file=/dev/null",
-                    "--pid-file",
-                    "--user=dnsmasq",
-                    "--interface={iface}",
-                    "--port=0",
-                    "--dhcp-range={dhcp_ip_begin},{dhcp_ip_end},24h",
-                    "--dhcp-leasefile=/run/kvmd/dnsmasq.lease",
-                    "--dhcp-option={dhcp_option_3}",
-                    "--dhcp-option=6",
-                    "--keep-in-foreground",
-                ], type=valid_command),
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
                 "post_start_cmd_remove": Option([], type=valid_options),
                 "post_start_cmd_append": Option([], type=valid_options),
 
-                "pre_stop_cmd": Option([
-                    "/usr/bin/systemctl",
-                    "stop",
-                    "kvmd-otgnet-dnsmasq",
-                ], type=valid_command),
+
+
+
+
+
+
                 "pre_stop_cmd_remove": Option([], type=valid_options),
                 "pre_stop_cmd_append": Option([], type=valid_options),
 

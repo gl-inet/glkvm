@@ -52,6 +52,7 @@
     <link rel="stylesheet" href="/share/css/kvm/keyboard.css">
     <link rel="stylesheet" href="/share/css/kvm/about.css">
     <link rel="stylesheet" href="/share/css/user.css">
+    <link rel="stylesheet" href="/share/css/kvm/upgrade.css">
     <script type="module">import {main} from "/share/js/kvm/main.js";
       main();
     </script>
@@ -648,47 +649,9 @@
             <button class="row25" disabled id="msd-disconnect-button">Disconnect</button>
             <button class="row25" disabled id="msd-reset-button">Reset</button>
           </div>
-        </div>
-      </li>
-      <li class="right" id="macro-dropdown"><a class="menu-button" href="#"><img class="led-gray" id="hid-recorder-led" src="/share/svg/led-gear.svg"><span>Macro</span></a>
-        <div class="menu">
-          <div class="text"><b>Record and play HID/ATX/GPIO actions<br></b><sub>For security reasons, the record will not be saved on the PiKVM</sub></div>
-          <hr>
-          <div class="buttons buttons-row">
-            <button class="row25" disabled data-force-hide-menu id="hid-recorder-record">&bull; Rec</button>
-            <button class="row25" disabled id="hid-recorder-stop">Stop</button>
-            <button class="row25" disabled id="hid-recorder-play">Play</button>
-            <button class="row25" disabled id="hid-recorder-clear">Clear</button>
-          </div>
-          <hr>
-          <table class="kv">
-            <tr>
-              <td>Script time:</td>
-              <td class="value" colspan="2" id="hid-recorder-time">00:00:00.0</td>
-            </tr>
-            <tr>
-              <td>Scripted events:</td>
-              <td class="value" id="hid-recorder-events-count">0</td>
-              <td><sup><i>include delays</i></sup></td>
-            </tr>
-          </table>
-          <hr>
-              <table class="kv">
-                <tr>
-                      <td>Infinite loop playback:</td>
-                      <td align="right">
-                        <div class="switch-box">
-                          <input disabled type="checkbox" id="hid-recorder-loop-switch">
-                          <label for="hid-recorder-loop-switch"><span class="switch-inner"></span><span class="switch"></span></label>
-                        </div>
-                      </td>
-                </tr>
-              </table>
-          <hr>
-          <input type="file" id="hid-recorder-new-script-file">
-          <div class="buttons buttons-row">
-            <button class="row50" disabled id="hid-recorder-upload">Upload script</button>
-            <button class="row50" disabled id="hid-recorder-download">Download script</button>
+          <div class="buttons">
+            <button class="row50" disabled id="msd-attach-thumbdrive-button">Attach Thumbdrive</button>
+            <button class="row50" disabled id="msd-detach-thumbdrive-button">Detach Thumbdrive</button>
           </div>
         </div>
       </li>
@@ -758,6 +721,57 @@
                 <td></td>
               </tr>
             </table>
+          </div>
+        </div>
+      </li>
+      <li class="right" id="rndis-dropdown"><a class="menu-button" href="
+        <div class="menu">
+          <div class="text"><b>RNDIS Network Control<br></b><sub>Start/Stop RNDIS network connection</sub></div>
+          <hr>
+          <div class="buttons">
+            <button data-force-hide-menu id="rndis-toggle-button">&bull; Start RNDIS</button>
+          </div>
+        </div>
+      </li>
+      <li class="right" id="macro-dropdown"><a class="menu-button" href="
+        <div class="menu">
+          <div class="text"><b>Record and play HID/ATX/GPIO actions<br></b><sub>For security reasons, the record will not be saved on the PiKVM</sub></div>
+          <hr>
+          <div class="buttons buttons-row">
+            <button class="row25" disabled data-force-hide-menu id="hid-recorder-record">&bull; Rec</button>
+            <button class="row25" disabled id="hid-recorder-stop">Stop</button>
+            <button class="row25" disabled id="hid-recorder-play">Play</button>
+            <button class="row25" disabled id="hid-recorder-clear">Clear</button>
+          </div>
+          <hr>
+          <table class="kv">
+            <tr>
+              <td>Script time:</td>
+              <td class="value" colspan="2" id="hid-recorder-time">00:00:00.0</td>
+            </tr>
+            <tr>
+              <td>Scripted events:</td>
+              <td class="value" id="hid-recorder-events-count">0</td>
+              <td><sup><i>include delays</i></sup></td>
+            </tr>
+          </table>
+          <hr>
+              <table class="kv">
+                <tr>
+                      <td>Infinite loop playback:</td>
+                      <td align="right">
+                        <div class="switch-box">
+                          <input disabled type="checkbox" id="hid-recorder-loop-switch">
+                          <label for="hid-recorder-loop-switch"><span class="switch-inner"></span><span class="switch"></span></label>
+                        </div>
+                      </td>
+                </tr>
+              </table>
+          <hr>
+          <input type="file" id="hid-recorder-new-script-file">
+          <div class="buttons buttons-row">
+            <button class="row50" disabled id="hid-recorder-upload">Upload script</button>
+            <button class="row50" disabled id="hid-recorder-download">Download script</button>
           </div>
         </div>
       </li>
@@ -841,6 +855,67 @@
       </li>
       <li class="right feature-disabled" id="gpio-dropdown"><a class="menu-button" id="gpio-menu-button" href="#"><span>GPIO</span></a>
         <div class="menu" id="gpio-menu"></div>
+      </li>
+      <li class="right" id="upgrade-dropdown"><a class="menu-button" href="
+        <div class="menu">
+          <div class="text"><b>System Upgrade<br></b><sub>Upload firmware and upgrade system</sub></div>
+          <hr>
+          <div class="hidden" id="upgrade-message-uploading">
+            <div class="text">
+              <table>
+                <tr>
+                  <td rowspan="2"><img class="sign " src="/share/svg/info.svg"></td>
+                  <td style="line-height:1.5"><b>Uploading firmware...</b></td>
+                </tr>
+                <tr>
+                  <td><sup style="line-height:1">Please wait until upload completes</sup></td>
+                </tr>
+              </table>
+            </div>
+            <hr>
+          </div>
+          <div class="hidden" id="upgrade-message-downloading">
+            <div class="text">
+                <table>
+                    <tr>
+                        <td rowspan="2"><img class="sign " src="/share/svg/info.svg"></td>
+                        <td style="line-height:1.5"><b>正在下载固件...</b></td>
+                    </tr>
+                    <tr>
+                        <td><sup style="line-height:1">请等待下载完成</sup></td>
+                    </tr>
+                </table>
+            </div>
+            <hr>
+          </div>
+          <div class="hidden" id="upgrade-message-version">
+            <table class="kv">
+              <tr>
+                <td>Local Model:</td>
+                <td class="value" id="upgrade-local-model"></td>
+              </tr>
+              <tr>
+                <td>Local Version:</td>
+                <td class="value" id="upgrade-local-version"></td>
+              </tr>
+              <tr>
+                <td>Server Model:</td>
+                <td class="value" id="upgrade-server-model"></td>
+              </tr>
+              <tr>
+                <td>Server Version:</td>
+                <td class="value" id="upgrade-server-version"></td>
+              </tr>
+            </table>
+            <hr>
+          </div>
+          <div class="buttons buttons-row">
+            <button class="row33" id="upgrade-select-button">选择固件</button>
+            <button class="row33" id="upgrade-download-button">下载固件</button>
+            <button class="row33" disabled id="upgrade-start-button">开始升级</button>
+          </div>
+          <input type="file" id="upgrade-file" style="display: none">
+        </div>
       </li>
     </ul>
     <div class="window" id="stream-ocr-window">
@@ -1768,7 +1843,7 @@
                   </div>
                 </div>
                 <div class="spacer"></div>
-                <div class="key wide-1 left" data-code="Backslash" style="width:78px">
+                <div class="key " data-code="Backslash">
                   <div class="label">|<br>&bsol;
                   </div>
                 </div>

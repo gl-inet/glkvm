@@ -60,6 +60,7 @@ from ...validators.kvm import valid_stream_h264_bitrate
 from ...validators.kvm import valid_stream_h264_gop
 
 from .auth import AuthManager
+from .init import InitManager
 from .info import InfoManager
 from .logreader import LogReader
 from .ugpio import UserGpio
@@ -70,12 +71,20 @@ from .ocr import Ocr
 from .api.auth import AuthApi
 from .api.auth import check_request_auth
 
+from .api.init import InitApi
+from .api.twofa import TwoFaApi
+from .api.astrowarp import AstrowarpApi
+from .api.fingerbot import FingerbotApi
+from .api.wol import WolApi
+from .api.tailscale import TailscaleApi
 from .api.info import InfoApi
 from .api.log import LogApi
 from .api.ugpio import UserGpioApi
 from .api.hid import HidApi
 from .api.atx import AtxApi
 from .api.msd import MsdApi
+from .api.rndis import RndisApi
+from .api.upgrade import UpgradeApi
 from .api.streamer import StreamerApi
 from .api.export import ExportApi
 from .api.redfish import RedfishApi
@@ -149,6 +158,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     def __init__(  # pylint: disable=too-many-arguments,too-many-locals
         self,
         auth_manager: AuthManager,
+        init_manager: InitManager,
         info_manager: InfoManager,
         log_reader: (LogReader | None),
         user_gpio: UserGpio,
@@ -157,6 +167,8 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         hid: BaseHid,
         atx: BaseAtx,
         msd: BaseMsd,
+        rndis: RndisApi,
+        upgrade: UpgradeApi,
         streamer: Streamer,
         snapshoter: Snapshoter,
 
@@ -171,6 +183,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         super().__init__()
 
         self.__auth_manager = auth_manager
+        self.__init_manager = init_manager
         self.__hid = hid
         self.__streamer = streamer
         self.__snapshoter = snapshoter  # Not a component: No state or cleanup
@@ -179,15 +192,24 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
 
         self.__hid_api = HidApi(hid, keymap_path, ignore_keys, mouse_x_range, mouse_y_range)  # Ugly hack to get keymaps state
         self.__streamer_api = StreamerApi(streamer, ocr)  # Same hack to get ocr langs state
+        self.__fingerbot_api = FingerbotApi()
         self.__apis: list[object] = [
             self,
             AuthApi(auth_manager),
+            InitApi(init_manager),
+            TwoFaApi(),
+            AstrowarpApi(),
+            self.__fingerbot_api,
+            WolApi(),
+            TailscaleApi(),
             InfoApi(info_manager),
             LogApi(log_reader),
             UserGpioApi(user_gpio),
             self.__hid_api,
             AtxApi(atx),
             MsdApi(msd),
+            RndisApi(),
+            UpgradeApi(),
             self.__streamer_api,
             ExportApi(info_manager, atx, user_gpio),
             RedfishApi(info_manager, atx),
@@ -195,11 +217,13 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
 
         self.__subsystems = [
             _Subsystem.make(auth_manager, "Auth manager"),
-            _Subsystem.make(user_gpio,    "User-GPIO", "gpio_state").add_source("gpio_model_state", user_gpio.get_model, None),
             _Subsystem.make(hid,          "HID",       "hid_state").add_source("hid_keymaps_state", self.__hid_api.get_keymaps, None),
+            _Subsystem.make(user_gpio,    "User-GPIO", "gpio_state").add_source("gpio_model_state", user_gpio.get_model, None),
             _Subsystem.make(atx,          "ATX",       "atx_state"),
             _Subsystem.make(msd,          "MSD",       "msd_state"),
             _Subsystem.make(streamer,     "Streamer",  "streamer_state").add_source("streamer_ocr_state", self.__streamer_api.get_ocr, None),
+            _Subsystem.make(rndis,        "RNDIS",     "rndis_state"),
+            _Subsystem.make(self.__fingerbot_api, "Fingerbot", "fingerbot_state"),
             *[
                 _Subsystem.make(info_manager.get_submanager(sub), f"Info manager ({sub})", f"info_{sub}_state",)
                 for sub in sorted(info_manager.get_subs())
@@ -282,6 +306,8 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         aiotools.create_deadly_task("Stream controller", self.__stream_controller())
         for sub in self.__subsystems:
             if sub.systask:
+
+                get_logger(0).info(f"Starting system task: {sub.name}")
                 aiotools.create_deadly_task(sub.name, sub.systask())
             for (event_type, src) in sub.sources.items():
                 if src.poll_state:

@@ -27,7 +27,7 @@ from .... import usb
 
 from .. import MsdOperationError
 
-
+from ....logging import get_logger
 # =====
 class MsdDriveLockedError(MsdOperationError):
     def __init__(self) -> None:
@@ -37,7 +37,8 @@ class MsdDriveLockedError(MsdOperationError):
 # =====
 class Drive:
     def __init__(self, gadget: str, instance: int, lun: int) -> None:
-        func = f"mass_storage.usb{instance}"
+        func = f"mass_storage.{instance}"
+
         self.__profile_func_path = usb.get_gadget_path(gadget, usb.G_PROFILE, func)
         self.__profile_path = usb.get_gadget_path(gadget, usb.G_PROFILE)
         self.__lun_path = usb.get_gadget_path(gadget, usb.G_FUNCTIONS, func, f"lun.{lun}")
@@ -54,7 +55,9 @@ class Drive:
         if path:
             self.__set_param("file", path)
         else:
+
             self.__set_param("forced_eject", "")
+            self.__set_param("file", "")
 
     def get_image_path(self) -> str:
         path = self.__get_param("file")

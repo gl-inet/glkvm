@@ -39,7 +39,7 @@ class InfoManager:
             "auth": AuthInfoSubmanager(config.kvmd.auth.enabled),
             "meta": MetaInfoSubmanager(config.kvmd.info.meta),
             "extras": ExtrasInfoSubmanager(config),
-            "hw": HwInfoSubmanager(**config.kvmd.info.hw._unpack()),
+
             "fan": FanInfoSubmanager(**config.kvmd.info.fan._unpack()),
         }
 

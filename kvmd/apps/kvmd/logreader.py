@@ -23,45 +23,48 @@
 import re
 import asyncio
 import time
-
+import logging
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
 from typing import AsyncGenerator
-
-import systemd.journal
-
 
 # =====
 class LogReader:
+    def __init__(self):
+        self.logger = logging.getLogger('kvmd')
+        self.logger.setLevel(logging.DEBUG)
+        handler = RotatingFileHandler(
+            filename='/var/log/kvmd.log',
+            maxBytes=512 * 1024,
+            backupCount=2,
+        )
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        self.logger.addHandler(handler)
+
     async def poll_log(self, seek: int, follow: bool) -> AsyncGenerator[dict, None]:
-        reader = systemd.journal.Reader()
-        reader.this_boot()
-        # XXX: Из-за смены ID машины в bootconfig это не работает при первой загрузке.
-        # reader.this_machine()
-        reader.log_level(systemd.journal.LOG_DEBUG)
+        with open('/var/log/kvmd.log', 'r') as log_file:
+            if seek > 0:
+                log_file.seek(0, 2)
+                file_size = log_file.tell()
+                log_file.seek(max(0, file_size - seek), 0)
 
-        services = set(
-            service
-            for service in systemd.journal.Reader().query_unique("_SYSTEMD_UNIT")
-            if re.match(r"kvmd(-\w+)*\.service", service)
-        ).union(["kvmd.service"])
+            while True:
+                line = log_file.readline()
+                if line:
+                    yield self.__line_to_record(line)
+                elif follow:
+                    await asyncio.sleep(1)
+                else:
+                    break
 
-        for service in services:
-            reader.add_match(_SYSTEMD_UNIT=service)
-        if seek > 0:
-            reader.seek_realtime(float(time.time() - seek))
-
-        for entry in reader:
-            yield self.__entry_to_record(entry)
-
-        while follow:
-            entry = reader.get_next()
-            if entry:
-                yield self.__entry_to_record(entry)
-            else:
-                await asyncio.sleep(1)
-
-    def __entry_to_record(self, entry: dict) -> dict[str, dict]:
-        return {
-            "dt": entry["__REALTIME_TIMESTAMP"],
-            "service": entry["_SYSTEMD_UNIT"],
-            "msg": entry["MESSAGE"].rstrip(),
-        }
+    def __line_to_record(self, line: str) -> dict:
+        parts = line.split(' - ', 3)
+        if len(parts) == 4:
+            dt = datetime.strptime(parts[0], '%Y-%m-%d %H:%M:%S,%f')
+            return {
+                "dt": dt,
+                "service": "kvmd",
+                "msg": parts[3].rstrip(),
+            }
+        return {}
