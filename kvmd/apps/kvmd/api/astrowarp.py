@@ -22,12 +22,16 @@
 
 
 import json
+import subprocess
 from aiohttp.web import Request
 from aiohttp.web import Response
 
 import os
+import asyncio
 from ....htserver import ForbiddenError
 from ....htserver import NotFoundError
+from ....htserver import BadGatewayError
+from ....htserver import BadRequestError
 from ....htserver import exposed_http
 from ....htserver import make_json_response
 from ....htserver import make_json_exception
@@ -101,3 +105,29 @@ class AstrowarpApi:
         else:
             os.system(f"{ASTROWARP_INIT_PATH} stop")
         return make_json_response()
+
+    async def _run_command(self, cmd: str) -> str:
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd.split(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+            if process.returncode != 0:
+                self._logger.error(f"Command failed: {stderr.decode()}")
+                raise BadRequestError()
+            return stdout.decode().strip()
+        except Exception as e:
+            self._logger.error(f"Error executing command: {e}")
+            raise BadRequestError()
+
+    @exposed_http("GET", "/astrowarp/unbind")
+    async def __unbind_handler(self, req: Request) -> Response:
+        try:
+
+            result = await self._run_command("ubus call gl-cloud unbind")
+            return make_json_response({"result": "success"})
+        except Exception as e:
+            self._logger.error(f"Error executing command: {e}")
+            return make_json_exception(BadGatewayError(),502)

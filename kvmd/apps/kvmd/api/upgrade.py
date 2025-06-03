@@ -8,6 +8,7 @@ import re
 import zipfile
 import io
 import datetime
+import json
 from ....logging import get_logger
 from .... import htclient
 
@@ -20,7 +21,7 @@ UPGRADE_FILE = "update.img"
 EDID_FILE = "/tmp/edid.bin"
 EDID_USER_FILE = "/etc/kvmd/user/edid.txt"
 LOG_DIR = "/tmp/log"
-LT6911C_UPGRADE_CMD = "lt6911c_upgrade -d /dev/i2c-1 -e /tmp/edid.bin && sleep 1 && echo 1 > /sys/devices/platform/ff510000.i2c/i2c-1/1-002b/reset"
+LT6911C_UPGRADE_CMD = "lt6911c_upgrade -d /dev/i2c-1 -e /tmp/edid.bin && sleep 1 && echo 1 >  /sys/bus/i2c/devices/1-002b/reset"
 MODEL_PATH = "/proc/gl-hw-info/model"
 BASE_URL = "https://fw.gl-inet.com/kvm/{model}/release"
 
@@ -35,13 +36,13 @@ class UpgradeApi:
             with open(MODEL_PATH, "r") as f:
                 model = f.read().strip()
         except Exception as e:
-            get_logger(0).warning(f"无法读取model信息，使用默认值rm1: {str(e)}")
+            get_logger(0).warning(f"Failed to read model info, using default value rm1: {str(e)}")
             model = "rm1"
 
 
         self.__version_url = f"{BASE_URL.format(model=model)}/version"
         self.__firmware_url = f"{BASE_URL.format(model=model)}/update.img"
-        self.__update_engine = UpdateEngine(self.__version_url,self.__firmware_url)
+        self.__update_engine = UpdateEngine(BASE_URL.format(model=model))
 
     def __validate_edid(self, edid_str: str) -> bool:
 
@@ -78,7 +79,7 @@ class UpgradeApi:
             additional_bytes = ''.join(additional_bytes.split())
 
             edid_str = edid_str + additional_bytes
-            get_logger(0).info("EDID只有128字节，已自动追加额外的128字节数据")
+            get_logger(0).info("EDID is only 128 bytes, automatically appending additional 128 bytes")
 
 
         return bytes.fromhex(edid_str)
@@ -100,7 +101,7 @@ class UpgradeApi:
                         break
                     size += len(chunk)
                     f.write(chunk)
-            get_logger(0).info("已上传固件文件，大小为 %d 字节", size)
+            get_logger(0).info("Firmware file uploaded, size: %d bytes", size)
             return make_json_response({"filename": filename, "size": size})
         return web.HTTPBadRequest(text="No file uploaded")
 
@@ -177,7 +178,7 @@ class UpgradeApi:
                 await self.__current_download_task
             except asyncio.CancelledError:
                 pass
-            get_logger(0).info("固件下载任务已被手动取消")
+            get_logger(0).info("Firmware download task has been manually cancelled")
             return make_json_response({"status": "success", "message": "download task has been cancelled"})
         else:
             return make_json_response({"status": "warning", "message": "no download task is running"})
@@ -247,7 +248,7 @@ class UpgradeApi:
             return make_json_response({"edid": edid_str})
 
         except Exception as ex:
-            get_logger(0).error(f"获取EDID数据时出错: {str(ex)}")
+            get_logger(0).error(f"Error getting EDID data: {str(ex)}")
             return make_json_exception(str(ex), 500)
 
     @exposed_http("GET", "/upgrade/log")
@@ -265,7 +266,11 @@ class UpgradeApi:
                 "logread": f"{LOG_DIR}/logread_{timestamp}.log",
                 "lsusb": f"{LOG_DIR}/lsusb_{timestamp}.log",
                 "ps auxww": f"{LOG_DIR}/ps_auxww_{timestamp}.log",
-                "cat /proc/meminfo": f"{LOG_DIR}/meminfo_{timestamp}.log"
+                "cat /proc/meminfo": f"{LOG_DIR}/meminfo_{timestamp}.log",
+                "cat /etc/version": f"{LOG_DIR}/version_{timestamp}.log",
+                "cat /proc/gl-hw-info/device_mac": f"{LOG_DIR}/device_mac_{timestamp}.log",
+                "cat /etc/glinet/gl-cloud.conf": f"{LOG_DIR}/gl-cloud.conf_{timestamp}.log",
+                "wg": f"{LOG_DIR}/wg_{timestamp}.log"
             }
 
 
@@ -283,7 +288,7 @@ class UpgradeApi:
                         f.write(b"\n\n--- STDERR ---\n\n")
                         f.write(stderr)
 
-                get_logger(0).info(f"已收集日志: {filename}")
+                get_logger(0).info(f"Log collected: {filename}")
 
 
             zip_buffer = io.BytesIO()
@@ -324,8 +329,8 @@ class UpgradeApi:
             return response
 
         except Exception as ex:
-            get_logger(0).error(f"收集日志时出错: {str(ex)}")
-            return make_json_exception(f"收集日志时出错: {str(ex)}", 500)
+            get_logger(0).error(f"Error collecting logs: {str(ex)}")
+            return make_json_exception(f"Error collecting logs: {str(ex)}", 500)
 
     async def _download_latest_firmware(self, request: web.Request) -> web.StreamResponse:
         written = size = 0
@@ -339,7 +344,7 @@ class UpgradeApi:
                 ) as remote:
                     size = remote.content_length
                     if not size:
-                        raise Exception("无法获取固件大小")
+                        raise Exception("Unable to get firmware size")
 
 
                     response = make_json_response({"size": size})
@@ -347,7 +352,7 @@ class UpgradeApi:
                     await response.prepare(request)
                     await response.write_eof()
 
-                    get_logger(0).info("正在从 %r 下载固件到 %r ...", self.__firmware_url, f"{UPGRADE_DIR}{UPGRADE_FILE}")
+                    get_logger(0).info("Downloading firmware from %r to %r ...", self.__firmware_url, f"{UPGRADE_DIR}{UPGRADE_FILE}")
 
 
                     chunk_size = 8192
@@ -357,7 +362,7 @@ class UpgradeApi:
                                 f.write(chunk)
                                 written += len(chunk)
                         except asyncio.CancelledError:
-                            get_logger(0).info("下载任务被取消")
+                            get_logger(0).info("Download task cancelled")
                             raise
 
                     return response
@@ -368,15 +373,45 @@ class UpgradeApi:
                 raise
 
 class UpdateEngine:
-    def __init__(self,version_url: str,firmware_url: str):
-        self.__version_url = version_url
-        self.__firmware_url = firmware_url
+    def __init__(self,base_url: str):
+        self.__base_url = base_url
+        self.__version_url = base_url+"/version"
+        self.__firmware_url = base_url+"/update.img"
+        self.__list_sha256_url = base_url+"/list-sha256.txt"
 
     async def get_local_verion(self):
         with open("/etc/version", "r") as f:
             local_content = f.read().strip()
         local_dict = dict(line.split('=') for line in local_content.splitlines())
         return local_dict.get('RK_VERSION', '')
+
+    async def get_list_sha256(self)->tuple[str,str]:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(self.__list_sha256_url) as response:
+                if response.status == 200:
+                    first_line = response.text.splitlines()[0]
+                    version = first_line.split()[0]
+                    firmware = first_line.split()[1]
+                    return version,firmware
+                else:
+                    return ""
+
+    async def __get_metadata(self, version: str) -> Dict[str, Any]:
+        """获取指定版本的metadata信息"""
+        try:
+            metadata_url = f"{self.__base_url}/metadata_{version}"
+            async with aiohttp.ClientSession() as session:
+                async with session.get(metadata_url) as response:
+                    if response.status == 200:
+                        text = await response.text()
+                        metadata = json.loads(text)
+                        return metadata
+                    else:
+                        get_logger(0).error(f"Failed to get metadata: {response.status}")
+                        return {}
+        except Exception as e:
+            get_logger(0).error(f"Error getting metadata: {str(e)}")
+            return {}
 
     async def compare_versions(self) -> Dict[str, Any]:
 
@@ -402,12 +437,21 @@ class UpdateEngine:
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(self.__version_url) as response:
+                async with session.get(self.__list_sha256_url) as response:
                     if response.status == 200:
-                        server_content = await response.text()
-                        server_dict = dict(line.split('=') for line in server_content.splitlines())
-                        result["server_model"] = server_dict.get('RK_MODEL', '')
-                        result["server_version"] = server_dict.get('RK_VERSION', '')
+                        list_content = await response.text()
+
+                        first_line = list_content.splitlines()[0]
+                        version = first_line.split()[0]
+
+
+                        metadata = await self.__get_metadata(version)
+                        if metadata and "version" in metadata:
+                            version_info = metadata["version"]
+                            result["server_model"] = result["local_model"]
+                            result["server_version"] = f"V{version_info['release']} {version_info['firmware_type']}"
+                        else:
+                            result["error"] = "Unable to get server version information"
                     else:
                         result["error"] = f"Server returned status code: {response.status}"
         except Exception as e:

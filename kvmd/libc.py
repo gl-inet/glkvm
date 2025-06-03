@@ -33,13 +33,15 @@ from ctypes import c_void_p
 
 import os
 
-static_libc_path = "/lib/libc-2.28.so"
+static_libc_path = ["/usr/lib/libc.so.6", "/lib/libc.so.6"]
 # =====
 def _load_libc() -> ctypes.CDLL:
     path = ctypes.util.find_library("c")
     if not path:
-        if os.path.exists(static_libc_path):
-            path = static_libc_path
+        for p in static_libc_path:
+            if os.path.exists(p):
+                path = p
+                break
         else:
             raise RuntimeError("Where is libc?")
     assert path

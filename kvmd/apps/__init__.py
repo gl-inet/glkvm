@@ -367,6 +367,13 @@ def _dump_config(config: Section) -> None:
 
 
 def _get_config_scheme() -> dict:
+
+    try:
+        with open("/proc/gl-hw-info/country_code", "r") as f:
+            country_code = f.read().strip()
+    except:
+        country_code = ""
+
     return {
         "logging": Option({}),
 
@@ -614,8 +621,8 @@ def _get_config_scheme() -> dict:
                 },
 
                 "rndis": {
-                    "enabled": Option(True, type=valid_bool),
-                    "start":   Option(True,  type=valid_bool),
+                    "enabled": Option(False, type=valid_bool),
+                    "start":   Option(False,  type=valid_bool),
                 },
 
                 "drives": {
@@ -786,8 +793,8 @@ def _get_config_scheme() -> dict:
 
         "janus": {
             "stun": {
-                "host":          Option("stun.l.google.com", type=valid_ip_or_host, unpack_as="stun_host"),
-                "port":          Option(19302, type=valid_port, unpack_as="stun_port"),
+                "host":          Option("stun.miwifi.com" if country_code == "CN" else "stun.l.google.com", type=valid_ip_or_host, unpack_as="stun_host"),
+                "port":          Option(3478 if country_code == "CN" else 19302, type=valid_port, unpack_as="stun_port"),
                 "timeout":       Option(5.0,   type=valid_float_f01, unpack_as="stun_timeout"),
                 "retries":       Option(5,     type=valid_int_f1, unpack_as="stun_retries"),
                 "retries_delay": Option(5.0,   type=valid_float_f01, unpack_as="stun_retries_delay"),
@@ -795,7 +802,7 @@ def _get_config_scheme() -> dict:
 
             "check": {
                 "interval":      Option(10.0, type=valid_float_f01, unpack_as="check_interval"),
-                "retries":       Option(5,    type=valid_int_f1, unpack_as="check_retries"),
+                "retries":       Option(65536,    type=valid_int_f1, unpack_as="check_retries"),
                 "retries_delay": Option(5.0,  type=valid_float_f01, unpack_as="check_retries_delay"),
             },
 

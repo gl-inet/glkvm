@@ -223,8 +223,8 @@ class TailscaleApi:
         try:
             os.makedirs(config_dir, exist_ok=True)
         except Exception as e:
-            self._logger.error(f"无法创建配置目录 {config_dir}: {e}")
-            raise BadRequestError(f"无法创建配置目录: {e}")
+            self._logger.error(f"Failed to create config directory {config_dir}: {e}")
+            raise BadRequestError(f"Failed to create config directory: {e}")
 
 
         try:
@@ -235,10 +235,10 @@ class TailscaleApi:
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=4)
 
-            self._logger.info(f"已更新Tailscale配置文件: enable={enable}")
+            self._logger.info(f"Updated Tailscale config file: enable={enable}")
         except Exception as e:
-            self._logger.error(f"无法写入配置文件 {config_path}: {e}")
-            raise BadRequestError(f"无法写入配置文件: {e}")
+            self._logger.error(f"Failed to write config file {config_path}: {e}")
+            raise BadRequestError(f"Failed to write config file: {e}")
 
     @exposed_http("POST", "/tailscale/start")
     async def _start_handler(self, _: Request) -> Response:
@@ -317,7 +317,7 @@ class TailscaleApi:
                 })
 
 
-            self._logger.info("启动tailscale login命令获取登录URL")
+            self._logger.info("Starting tailscale login command to get login URL")
             process = await asyncio.create_subprocess_exec(
                 "tailscale", "login",
                 stdout=subprocess.PIPE,
@@ -328,7 +328,7 @@ class TailscaleApi:
             auth_url = ""
             max_attempts = 10
             for attempt in range(max_attempts):
-                self._logger.info(f"尝试获取AuthURL，第 {attempt+1}/{max_attempts} 次")
+                self._logger.info(f"Attempting to get AuthURL, attempt {attempt+1}/{max_attempts}")
 
 
                 try:
@@ -338,10 +338,10 @@ class TailscaleApi:
 
 
                     if auth_url:
-                        self._logger.info(f"成功获取到AuthURL: {auth_url}")
+                        self._logger.info(f"Successfully got AuthURL: {auth_url}")
                         break
                 except Exception as e:
-                    self._logger.error(f"检查AuthURL时出错: {e}")
+                    self._logger.error(f"Error checking AuthURL: {e}")
 
 
                 if attempt == max_attempts - 1 and not auth_url:
@@ -352,11 +352,11 @@ class TailscaleApi:
 
 
             try:
-                self._logger.info("stop tailscale login")
+                self._logger.info("Stopping tailscale login")
                 process.terminate()
                 await asyncio.wait_for(process.wait(), timeout=1.0)
             except asyncio.TimeoutError:
-                self._logger.warning("tailscale login timeout, kill process")
+                self._logger.warning("Tailscale login timeout, killing process")
                 process.kill()
                 await process.wait()
 
@@ -410,14 +410,15 @@ class TailscaleApi:
             try:
                 if "User" in status_data and status_data["User"]:
 
-                    user_id = next(iter(status_data["User"]))
-                    user_data = status_data["User"][user_id]
-                    login_name = user_data.get("LoginName")
+                    if "Self" in status_data and status_data["Self"]:
+                        user_id = str(status_data["Self"].get("UserID"))
+                        user_data = status_data["User"][user_id]
+                        login_name = user_data.get("LoginName")
 
                     if login_name:
                         response_data["login_name"] = login_name
             except Exception as e:
-                self._logger.warning(f"Error extracting login name: {e}")
+                self._logger.error(f"Error extracting login name: {e}")
 
 
             try:
@@ -434,7 +435,7 @@ class TailscaleApi:
                                 response_data["ipv6"] = ip
                         except ValueError as e:
 
-                            self._logger.warning(f"无效的IP地址 {ip}: {e}")
+                            self._logger.warning(f"Invalid IP address {ip}: {e}")
             except Exception as e:
                 self._logger.warning(f"Error extracting TailscaleIPs: {e}")
 
@@ -475,4 +476,155 @@ class TailscaleApi:
             return make_json_exception(e, 400)
         except Exception as e:
             self._logger.error(f"Error logging out from Tailscale: {e}")
+            return make_json_exception(BadRequestError(), 502)
+
+    async def _get_eth0_subnet(self) -> Optional[str]:
+        """
+        获取eth0接口的子网信息，格式为CIDR（例如：192.168.1.0/24）
+        如果获取失败则返回None
+        """
+        try:
+
+            cmd = "ip -json addr show eth0"
+            output = await self._run_command(cmd)
+
+
+            data = json.loads(output)
+            if not data or not isinstance(data, list):
+                self._logger.error("eth0 interface information not found")
+                return None
+
+            self._logger.info(f"eth0 interface information: {data}")
+
+
+            for interface in data:
+
+                if interface.get("ifname") == "eth0" and interface.get("addr_info"):
+
+                    for addr_info in interface["addr_info"]:
+                        if addr_info.get("family") == "inet":
+                            ip_address = addr_info.get("local")
+                            prefix_len = addr_info.get("prefixlen")
+
+                            if ip_address and prefix_len:
+
+                                network = ipaddress.IPv4Network(f"{ip_address}/{prefix_len}", strict=False)
+                                return str(network)
+
+            self._logger.warning("No IPv4 address found for eth0 interface")
+            return None
+        except json.JSONDecodeError as e:
+            self._logger.error(f"Error parsing ip command output: {e}")
+            return None
+        except Exception as e:
+            self._logger.error(f"Error getting eth0 subnet information: {e}")
+            return None
+
+    @exposed_http("POST", "/tailscale/config")
+    async def _config_handler(self, request: Request) -> Response:
+        """
+        配置Tailscale的多个功能参数
+        接受参数：
+        - exit_node: 布尔值，为true时设置当前节点为exit node，为false时取消
+        - advertise_routes: 字符串，要广播的路由，多个路由用逗号分隔
+          特殊值："auto" - 自动获取eth0接口的子网
+        - accept_routes: 布尔值，是否接受来自其他节点的路由
+        - accept_dns: 布尔值，是否接受tailscale的DNS设置
+        """
+        try:
+
+            exit_node = request.query.get("exit_node", None)
+            advertise_routes = request.query.get("advertise_routes", None)
+            accept_routes = request.query.get("accept_routes", None)
+            accept_dns = request.query.get("accept_dns", None)
+
+
+            cmd_parts = ["tailscale", "set"]
+
+
+            if exit_node is not None:
+
+                exit_node_bool = exit_node.lower() in ("true", "1", "yes")
+                cmd_parts.append(f"--advertise-exit-node={str(exit_node_bool).lower()}")
+
+
+            actual_routes = None
+            if advertise_routes is not None:
+                if advertise_routes.lower() == "auto":
+
+                    eth0_subnet = await self._get_eth0_subnet()
+                    if eth0_subnet:
+                        actual_routes = eth0_subnet
+                        cmd_parts.append(f"--advertise-routes={eth0_subnet}")
+                    else:
+                        return make_json_response({
+                            "success": False,
+                            "error": "Failed to automatically get eth0 subnet information"
+                        })
+                elif advertise_routes.strip():
+                    actual_routes = advertise_routes
+                    cmd_parts.append(f"--advertise-routes={advertise_routes}")
+                else:
+                    actual_routes = None
+                    cmd_parts.append(f"--advertise-routes=")
+
+
+            if accept_routes is not None:
+
+                accept_routes_bool = accept_routes.lower() in ("true", "1", "yes")
+                cmd_parts.append(f"--accept-routes={str(accept_routes_bool).lower()}")
+
+
+            if accept_dns is not None:
+
+                accept_dns_bool = accept_dns.lower() in ("true", "1", "yes")
+                cmd_parts.append(f"--accept-dns={str(accept_dns_bool).lower()}")
+
+
+            if len(cmd_parts) <= 2:
+                return make_json_response({
+                    "success": False,
+                    "error": "At least one configuration parameter is required"
+                })
+
+
+            cmd = " ".join(cmd_parts)
+            self._logger.info(f"Executing Tailscale command: {cmd}")
+
+            output = await self._run_command(cmd)
+
+
+            await asyncio.sleep(2)
+
+
+            status_data = await self._get_tailscale_status()
+
+
+            response = {
+                "success": True,
+                "output": output,
+                "status": status_data.get("BackendState", "Unknown"),
+                "applied_settings": {}
+            }
+
+
+            response["applied_settings"]["advertise_routes"] = actual_routes
+            if exit_node is not None:
+                response["applied_settings"]["exit_node"] = exit_node_bool
+            if accept_routes is not None:
+                response["applied_settings"]["accept_routes"] = accept_routes_bool
+            if accept_dns is not None:
+                response["applied_settings"]["accept_dns"] = accept_dns_bool
+
+            return make_json_response(response)
+        except json.JSONDecodeError:
+            self._logger.error("Invalid JSON request data")
+            return make_json_exception(BadRequestError("Invalid request data format"), 400)
+        except KeyError as e:
+            self._logger.error(f"Missing required parameter: {e}")
+            return make_json_exception(BadRequestError(f"Missing parameter: {e}"), 400)
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error configuring Tailscale parameters: {e}")
             return make_json_exception(BadRequestError(), 502)

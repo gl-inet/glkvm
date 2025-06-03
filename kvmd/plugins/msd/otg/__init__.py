@@ -448,8 +448,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 if mount_path:
                     try:
                         get_logger(0).info(f"Mounting {path} to {mount_path}")
-
-                        await aiohelpers.mount(path, mount_path, "rw,nonempty",cmd = ["mount.exfat"])
+                        await aiohelpers.mount(path, mount_path, "rw",cmd = ["mount"])
 
 
                         await self.__clean_trash_dirs(mount_path)
@@ -479,7 +478,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                     get_logger(0).warning("Failed to set volume label, but continuing anyway")
 
 
-                await aiohelpers.mount(self.partition_device, self.partition_mount_path, "rw,nonempty", cmd=["mount.exfat"])
+                await aiohelpers.mount(self.partition_device, self.partition_mount_path, "rw", cmd=["mount"])
             except Exception as e:
                 get_logger(0).error(f"Failed to umount or format partition: {e}")
                 raise

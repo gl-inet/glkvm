@@ -331,14 +331,14 @@ def _cmd_stop(config: Section) -> None:
 
     profile_path = join(gadget_path, usb.G_PROFILE)
     for func in os.listdir(profile_path):
-        if re.search(r"\.usb\d+$", func):
+        if re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func):
             _unlink(join(profile_path, func))
     _rmdir(join(profile_path, "strings/0x409"))
     _rmdir(profile_path)
 
     funcs_path = join(gadget_path, "functions")
     for func in os.listdir(funcs_path):
-        if re.search(r"\.usb\d+$", func):
+        if re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func):
             _rmdir(join(funcs_path, func))
 
     _rmdir(join(gadget_path, "strings/0x409"))

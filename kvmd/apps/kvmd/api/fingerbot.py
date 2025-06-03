@@ -73,7 +73,7 @@ class FingerbotApi:
         prev_exist = None
         while True:
             exist = os.path.exists(self.DEVICE_PATH)
-            if prev_exist != exist or self._version_cache is None or (isinstance(self._battery_cache, (int, float)) and self._battery_cache > 100):
+            if prev_exist != exist or self._version_cache is None:
                 yield {"exist": exist}
                 prev_exist = exist
 
@@ -213,6 +213,74 @@ class FingerbotApi:
         except Exception as e:
             self._logger.error(f"Error executing fingerbot command: {e}")
             return make_json_exception(BadRequestError(f"Failed to click:{e}"), 502)
+
+    @exposed_http("GET", "/fingerbot/push")
+    async def _push_handler(self, request: Request) -> Response:
+        angle_enum = int(request.query.get("angle_enum", ""))
+        if not self._is_angle_enum_valid(angle_enum):
+            return make_json_exception(BadRequestError("angle_enum is not a number or not in range"), 400)
+
+        push_time, pull_time = FingerbotApi.angle_enum_dict[angle_enum]
+        press_time = 0
+        pull_time = 0
+
+        try:
+            process = await create_subprocess_exec(
+                "/usr/sbin/fingerbot",
+                "set-action",
+                str(push_time),
+                str(press_time),
+                str(pull_time),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                self._logger.error(f"Fingerbot command failed: {stderr.decode()}")
+                return make_json_exception(BadRequestError(f"Failed to push:{e}"), 502)
+
+
+            await self._read_battery()
+            return make_json_response({"result": "success"})
+
+        except Exception as e:
+            self._logger.error(f"Error execute fingerbot command: {e}")
+            return make_json_exception(BadGatewayError("Failed to push:{e}"), 502)
+
+    @exposed_http("GET", "/fingerbot/pull")
+    async def _pull_handler(self, request: Request) -> Response:
+        angle_enum = int(request.query.get("angle_enum", ""))
+        if not self._is_angle_enum_valid(angle_enum):
+            return make_json_exception(BadRequestError("angle_enum is not a number or not in range"), 400)
+
+        push_time, pull_time = FingerbotApi.angle_enum_dict[angle_enum]
+        press_time = 0
+        push_time = 0
+
+        try:
+            process = await create_subprocess_exec(
+                "/usr/sbin/fingerbot",
+                "set-action",
+                str(push_time),
+                str(press_time),
+                str(pull_time),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                self._logger.error(f"Fingerbot command failed: {stderr.decode()}")
+                return make_json_exception(BadRequestError(f"Failed to pull:{e}"), 502)
+
+
+            await self._read_battery()
+            return make_json_response({"result": "success"})
+
+        except Exception as e:
+            self._logger.error(f"Error execute fingerbot command: {e}")
+            return make_json_exception(BadGatewayError("Failed to pull:{e}"), 502)
 
     @exposed_http("POST", "/fingerbot/upload")
     async def _upload_handler(self, request: Request) -> Response:

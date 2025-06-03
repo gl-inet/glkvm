@@ -272,7 +272,8 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
 
             self.__unsynced += len(chunk)
             if self.__unsynced >= self.__sync_size:
-                await self.__sync()
+
+
                 self.__unsynced = 0
 
             now = time.monotonic()
