@@ -75,8 +75,10 @@ from .api.init import InitApi
 from .api.twofa import TwoFaApi
 from .api.astrowarp import AstrowarpApi
 from .api.fingerbot import FingerbotApi
+from .api.repeater import RepeaterApi
 from .api.wol import WolApi
 from .api.tailscale import TailscaleApi
+from .api.system import SystemApi
 from .api.info import InfoApi
 from .api.log import LogApi
 from .api.ugpio import UserGpioApi
@@ -193,6 +195,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         self.__hid_api = HidApi(hid, keymap_path, ignore_keys, mouse_x_range, mouse_y_range)  # Ugly hack to get keymaps state
         self.__streamer_api = StreamerApi(streamer, ocr)  # Same hack to get ocr langs state
         self.__fingerbot_api = FingerbotApi()
+        self.__repeater_api = RepeaterApi()
         self.__apis: list[object] = [
             self,
             AuthApi(auth_manager),
@@ -201,7 +204,9 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             AstrowarpApi(),
             self.__fingerbot_api,
             WolApi(),
+            self.__repeater_api,
             TailscaleApi(),
+            SystemApi(),
             InfoApi(info_manager),
             LogApi(log_reader),
             UserGpioApi(user_gpio),

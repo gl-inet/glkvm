@@ -24,6 +24,14 @@ class _Netcfg:
     stun_ip:   str = dataclasses.field(default="")
     stun_port: int = dataclasses.field(default=0)
 
+    @staticmethod
+    def is_network_changed(prev: '_Netcfg | None', current: '_Netcfg') -> bool:
+        if prev is None:
+            return True
+        return (prev.src_ip != current.src_ip
+                or prev.ext_ip != current.ext_ip
+                or prev.nat_type != current.nat_type)
+
 
 # =====
 class JanusRunner:  # pylint: disable=too-many-instance-attributes
@@ -89,10 +97,10 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     logger.error("Empty src_ip; stopping Janus ...")
                     await self.__stop_janus()
                 prev_netcfg = netcfg
-            elif prev_netcfg != netcfg:
+            elif _Netcfg.is_network_changed(prev_netcfg, netcfg):
                 if netcfg_diff_times <= 6:
                     netcfg_diff_times += 1
-                    logger.info("Public IP address changed to %s, original %s, but it's not stable yet, waiting %d seconds ...", netcfg.ext_ip, prev_netcfg.ext_ip, self.__check_interval)
+                    logger.info("Public IP address changed from %s %s to %s %s, but it's not stable yet, waiting %d seconds ...", prev_netcfg.ext_ip, prev_netcfg.nat_type, netcfg.ext_ip, netcfg.nat_type, self.__check_interval)
                     await asyncio.sleep(self.__check_interval)
                     continue
                 netcfg_diff_times = 0
@@ -118,7 +126,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         try:
             gws = netifaces.gateways()
             if "default" in gws:
-                for proto in [socket.AF_INET, socket.AF_INET6]:
+                for proto in [socket.AF_INET]:
                     if proto in gws["default"]:
                         iface = gws["default"][proto][1]
                         addrs = netifaces.ifaddresses(iface)
@@ -127,7 +135,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
             for iface in netifaces.interfaces():
                 if not iface.startswith(("lo", "docker")):
                     addrs = netifaces.ifaddresses(iface)
-                    for proto in [socket.AF_INET, socket.AF_INET6]:
+                    for proto in [socket.AF_INET]:
                         if proto in addrs:
                             return addrs[proto][0]["addr"]
         except Exception as ex:

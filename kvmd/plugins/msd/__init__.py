@@ -148,16 +148,16 @@ class BaseMsd(BasePlugin):
     async def set_connected(self, connected: bool) -> None:
         raise NotImplementedError()
 
-    async def partition_show(self) -> None:
+    async def partition_show(self) -> dict[str, dict]:
         raise NotImplementedError()
 
-    async def partition_connect(self,path:str) -> None:
+    async def partition_connect(self) -> None:
         raise NotImplementedError()
 
     async def partition_disconnect(self) -> None:
         raise NotImplementedError()
 
-    async def partition_format(self) -> None:
+    async def partition_format(self, path: str) -> None:
         raise NotImplementedError()
 
     @contextlib.asynccontextmanager

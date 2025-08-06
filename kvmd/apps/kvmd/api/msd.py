@@ -92,16 +92,18 @@ class MsdApi:
         return make_json_response({
             "devices": {
                 path: {
-                    "path": path,
-                    "size": size
+                    "path": f"/dev/disk/by-uuid/{info.get('uuid', '')}",
+                    "size": info.get("size", 0) if isinstance(info, dict) else info,
+                    "uuid": info.get("uuid", "") if isinstance(info, dict) else "",
+                    "filesystem": info.get("filesystem", "") if isinstance(info, dict) else ""
                 }
-                for path, size in devices.items()
+                for path, info in devices.items()
             }
         })
 
     @exposed_http("GET", "/msd/partition_connect")
     async def __connect_partition_handler(self, req: Request) -> Response:
-        await self.__msd.partition_connect(req.query.get("path"))
+        await self.__msd.partition_connect()
         return make_json_response()
 
     @exposed_http("GET", "/msd/partition_disconnect")
@@ -111,11 +113,10 @@ class MsdApi:
 
     @exposed_http("GET", "/msd/partition_format")
     async def __format_partition_handler(self, req: Request) -> Response:
-        """
-            format partition /dev/block/by-name/media
-        """
+
         try:
-            await self.__msd.partition_format()
+            path = req.query.get("path", "")
+            await self.__msd.partition_format(path)
         except Exception as e:
             return make_json_exception(e, 500)
         return make_json_response()

@@ -39,6 +39,7 @@ from ....validators.basic import valid_bool
 from ....validators.basic import valid_number
 from ....validators.os import valid_command
 from ....validators.kvm import valid_msd_image_name
+from ....validators.basic import valid_stripped_string
 
 from .... import aiotools
 from .... import aiohelpers
@@ -120,10 +121,26 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
     mount_dict = {
         "/dev/mmcblk0p10": "/userdata/media",
         "/dev/block/by-name/media": "/userdata/media",
-        "/dev/sda1": "/mnt/sdcard/"
-        }
+    }
     partition_device = "/dev/block/by-name/media"
-    partition_mount_path = "/userdata/media"
+
+    def get_mount_path(self, device_path: str) -> str:
+
+        if device_path in self.mount_dict:
+            return self.mount_dict[device_path]
+
+
+        if device_path.startswith("/dev/sd"):
+            return "/mnt/sdcard/"
+
+
+        return None
+
+    async def partition_remount(self) -> None:
+
+        await aiohelpers.umount(self.__partition_device)
+        await aiohelpers.mount(self.__partition_device, self.get_mount_path(self.__partition_device), "rw", cmd=["mount"])
+
     def __init__(  # pylint: disable=super-init-not-called
         self,
         read_chunk_size: int,
@@ -135,11 +152,13 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         initial: dict,
 
         gadget: str,  # XXX: Not from options, see /kvmd/apps/kvmd/__init__.py for details
+        partition_device: str = "/dev/block/by-name/media",
     ) -> None:
 
         self.__read_chunk_size = read_chunk_size
         self.__write_chunk_size = write_chunk_size
         self.__sync_chunk_size = sync_chunk_size
+        self.__partition_device = os.path.realpath(partition_device)
 
         self.__initial_image: str = initial["image"]
         self.__initial_cdrom: bool = initial["cdrom"]
@@ -153,8 +172,13 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
 
 
+        aiotools.run_sync(self.partition_remount())
 
-        self.__storage = Storage("/userdata/media", remount_cmd)
+
+
+
+
+        self.__storage = Storage(self.get_mount_path(self.__partition_device), remount_cmd)
 
         self.__reader: (MsdFileReader | None) = None
         self.__writer: (MsdFileWriter | None) = None
@@ -172,6 +196,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             "read_chunk_size":   Option(65536,   type=functools.partial(valid_number, min=1024)),
             "write_chunk_size":  Option(65536,   type=functools.partial(valid_number, min=1024)),
             "sync_chunk_size":   Option(4194304, type=functools.partial(valid_number, min=1024)),
+            "partition_device":  Option("/dev/block/by-name/media", type=valid_stripped_string),
 
             "remount_cmd": Option([
                 "/bin/mount",
@@ -322,9 +347,45 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
             self.__state.vd.connected = connected
 
+    async def __get_partition_info(self, dev_path: str, size_kb: int) -> dict:
+        """获取分区的详细信息
+
+        Args:
+            dev_path: 分区设备路径
+            size_kb: 分区大小(KB)
+
+        Returns:
+            包含分区信息的字典,包括size、uuid和filesystem
+        """
+
+        uuid = ""
+        filesystem = ""
+        try:
+            process = await create_subprocess_exec(
+                "blkid",
+                dev_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, _ = await process.communicate()
+            output = stdout.decode().strip()
+
+            if "UUID=" in output:
+                uuid = output.split("UUID=")[1].split()[0].strip('"')
+            if "TYPE=" in output:
+                filesystem = output.split("TYPE=")[1].split()[0].strip('"')
+        except Exception as e:
+            get_logger(0).error(f"Failed to get UUID and filesystem type for {dev_path}: {e}")
+
+        return {
+            "size": size_kb * 1024,
+            "uuid": uuid,
+            "filesystem": filesystem
+        }
+
 
     @aiotools.atomic_fg
-    async def partition_show(self) -> dict[str, int]:
+    async def partition_show(self) -> dict[str, dict]:
         devices = {}
 
         try:
@@ -341,16 +402,21 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                             disk_name = dev_name.rstrip("0123456789")
 
                             try:
-                                with open(f"/sys/block/{disk_name}/removable", "r") as f:
-                                    removable = f.read().strip()
-                                if removable == "1":
 
-                                    if len(dev_name) > len(disk_name):
-                                        devices[f"/dev/{dev_name}"] = size_kb * 1024
+
+
+
+
+
+
+                                if len(dev_name) > len(disk_name):
+                                    dev_path = f"/dev/{dev_name}"
+                                    devices[dev_path] = await self.__get_partition_info(dev_path, size_kb)
                             except (IOError, OSError):
                                 continue
                         if dev_name.startswith("mmcblk0p10"):
-                            devices[f"/dev/{dev_name}"] = size_kb * 1024
+                            dev_path = f"/dev/{dev_name}"
+                            devices[dev_path] = await self.__get_partition_info(dev_path, size_kb)
         except (IOError, OSError) as e:
             get_logger(0).error(f"Error reading partitions: {str(e)}")
 
@@ -359,11 +425,13 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         return devices
 
     @aiotools.atomic_fg
-    async def partition_connect(self,path:str) -> None:
+    async def partition_connect(self) -> None:
         async with self.__state.busy():
             assert self.__state.vd_partition
 
             await aiotools.run_async(os.sync)
+
+            path = self.__partition_device
 
             if path.startswith("/dev/"):
 
@@ -444,7 +512,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
 
             if path.startswith("/dev/"):
-                mount_path = self.mount_dict.get(path)
+                mount_path = self.get_mount_path(path)
                 if mount_path:
                     try:
                         get_logger(0).info(f"Mounting {path} to {mount_path}")
@@ -460,25 +528,30 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         await self.__reload_state()
 
     @aiotools.atomic_fg
-    async def partition_format(self) -> None:
+    async def partition_format(self, path: str) -> None:
         async with self.__state.busy():
             assert self.__state.vd_partition
+
+            if not path or path.strip() == "":
+                path = self.partition_device
             try:
 
-                get_logger(0).info(f"Umounting {self.partition_device}")
-                await aiohelpers.umount(self.partition_device)
+                get_logger(0).info(f"Umounting {path}")
+                await aiohelpers.umount(path)
 
 
-                get_logger(0).info(f"Formatting {self.partition_device}")
-                if not await self.__run_command("mkfs.exfat", [self.partition_device], "mkfs.exfat command failed"):
+                get_logger(0).info(f"Formatting {path}")
+                if not await self.__run_command("mkfs.exfat", [path], "mkfs.exfat command failed"):
                     raise Exception("Failed to format partition")
 
 
-                if not await self.__run_command("exfatlabel", [self.partition_device, "GLKVM"], "exfatlabel command failed"):
+                if not await self.__run_command("exfatlabel", [path, "GLKVM"], "exfatlabel command failed"):
                     get_logger(0).warning("Failed to set volume label, but continuing anyway")
 
 
-                await aiohelpers.mount(self.partition_device, self.partition_mount_path, "rw", cmd=["mount"])
+                mount_path = self.get_mount_path(path)
+                if mount_path:
+                    await aiohelpers.mount(path, mount_path, "rw", cmd=["mount"])
             except Exception as e:
                 get_logger(0).error(f"Failed to umount or format partition: {e}")
                 raise

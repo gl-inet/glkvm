@@ -802,7 +802,7 @@ def _get_config_scheme() -> dict:
 
             "check": {
                 "interval":      Option(10.0, type=valid_float_f01, unpack_as="check_interval"),
-                "retries":       Option(65536,    type=valid_int_f1, unpack_as="check_retries"),
+                "retries":       Option(5,    type=valid_int_f1, unpack_as="check_retries"),
                 "retries_delay": Option(5.0,  type=valid_float_f01, unpack_as="check_retries_delay"),
             },
 

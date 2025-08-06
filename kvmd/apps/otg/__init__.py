@@ -206,7 +206,7 @@ class _GadgetConfig:
             _symlink(func_path, join(self.__profile_path, func))
 
 
-        name = ("Mass Storage Drive" if self.__msd_instance == 0 else f"Extra Drive #{self.__msd_instance}")
+        name = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else f"Mass Storage Disk
         self.__create_meta(func, name)
 
 

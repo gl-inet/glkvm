@@ -214,6 +214,7 @@ class UpgradeApi:
             os.makedirs(os.path.dirname(EDID_USER_FILE), exist_ok=True)
             with open(EDID_USER_FILE, "w") as f:
                 f.write(edid_str)
+            await asyncio.create_subprocess_shell("sync")
 
 
             proc = await asyncio.create_subprocess_shell(
@@ -270,6 +271,7 @@ class UpgradeApi:
                 "cat /etc/version": f"{LOG_DIR}/version_{timestamp}.log",
                 "cat /proc/gl-hw-info/device_mac": f"{LOG_DIR}/device_mac_{timestamp}.log",
                 "cat /etc/glinet/gl-cloud.conf": f"{LOG_DIR}/gl-cloud.conf_{timestamp}.log",
+                "ifconfig": f"{LOG_DIR}/ifconfig_{timestamp}.log",
                 "wg": f"{LOG_DIR}/wg_{timestamp}.log"
             }
 
@@ -337,8 +339,17 @@ class UpgradeApi:
 
         async with self.__download_lock:
             try:
+
+                version, firmware_filename = await self.__update_engine.get_list_sha256()
+                if not firmware_filename:
+                    raise Exception("Unable to get firmware filename")
+
+
+                firmware_url = f"{self.__update_engine.get_base_url()}/{firmware_filename}"
+                get_logger(0).info("Generated firmware URL: %s", firmware_url)
+
                 async with htclient.download(
-                    url=self.__firmware_url,
+                    url=firmware_url,
                     timeout=10.0,
                     read_timeout=(7 * 24 * 3600),
                 ) as remote:
@@ -352,7 +363,7 @@ class UpgradeApi:
                     await response.prepare(request)
                     await response.write_eof()
 
-                    get_logger(0).info("Downloading firmware from %r to %r ...", self.__firmware_url, f"{UPGRADE_DIR}{UPGRADE_FILE}")
+                    get_logger(0).info("Downloading firmware from %r to %r ...", firmware_url, f"{UPGRADE_DIR}{UPGRADE_FILE}")
 
 
                     chunk_size = 8192
@@ -389,12 +400,17 @@ class UpdateEngine:
         async with aiohttp.ClientSession() as session:
             async with session.get(self.__list_sha256_url) as response:
                 if response.status == 200:
-                    first_line = response.text.splitlines()[0]
+                    content = await response.text()
+                    first_line = content.splitlines()[0]
                     version = first_line.split()[0]
                     firmware = first_line.split()[1]
                     return version,firmware
                 else:
-                    return ""
+                    return "", ""
+
+    def get_base_url(self) -> str:
+        """获取base_url"""
+        return self.__base_url
 
     async def __get_metadata(self, version: str) -> Dict[str, Any]:
         """获取指定版本的metadata信息"""
@@ -450,6 +466,8 @@ class UpdateEngine:
                             version_info = metadata["version"]
                             result["server_model"] = result["local_model"]
                             result["server_version"] = f"V{version_info['release']} {version_info['firmware_type']}"
+                            result["release_note"] = metadata.get("release_note", "")
+                            result["release_note_cn"] = metadata.get("release_note_cn", "")
                         else:
                             result["error"] = "Unable to get server version information"
                     else:

@@ -75,8 +75,8 @@ class Stun:
         nat_type = StunNatType.ERROR
         ext_ip = ""
         try:
-            (src_fam, _, _, _, src_addr) = (await self.__retried_getaddrinfo_udp(src_ip, src_port))[0]
 
+            src_fam = socket.AF_INET
             stun_ips = [
                 stun_addr[0]
                 for (stun_fam, _, _, _, stun_addr) in (await self.__retried_getaddrinfo_udp(self.__host, self.__port))

@@ -234,6 +234,7 @@ class TailscaleApi:
 
             with open(config_path, "w") as f:
                 json.dump(config, f, indent=4)
+            await asyncio.create_subprocess_shell("sync")
 
             self._logger.info(f"Updated Tailscale config file: enable={enable}")
         except Exception as e:

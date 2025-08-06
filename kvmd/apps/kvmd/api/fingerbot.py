@@ -44,7 +44,8 @@ from ....logging import get_logger
 logger = get_logger()
 
 class FingerbotApi:
-    DEVICE_PATH = "/sys/class/bluetooth/hci0"
+    _device_path = "/sys/class/bluetooth/hci0"
+    DEVICE_NAME = "FGB01-Dongle"
     MIN_PRESS_TIME = 100
     MAX_PRESS_TIME = 60 * 1000
     PULL_TIME_OFFSET = 3
@@ -63,17 +64,43 @@ class FingerbotApi:
         self._battery_cache: Optional[int] = None
         self._version_cache: Optional[str] = None
 
+    def get_dongle_hci_path(self, target_product_name: str) -> Optional[str]:
+        base_path = '/sys/class/bluetooth/'
+        for hci in os.listdir(base_path):
+            hci_path = os.path.join(base_path, hci)
+            device_link = os.path.join(hci_path, 'device')
+
+            if os.path.islink(device_link):
+                real_device_path = os.path.realpath(device_link)
+                cur_path = real_device_path
+                while cur_path != '/':
+                    product_file = os.path.join(cur_path, 'product')
+                    try:
+                        with open(product_file, 'r') as f:
+                            product_name = f.read().strip()
+                        if product_name == target_product_name:
+                            return hci_path
+                    except FileNotFoundError:
+                        pass
+                    cur_path = os.path.dirname(cur_path)
+        return None
+
     async def get_state(self) -> dict:
-        return {
-            "exist": os.path.exists(self.DEVICE_PATH)
-        }
+        if self._device_path:
+            return {"exist": os.path.exists(self._device_path)}
+        else:
+            return {"exist": False}
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
         """轮询蓝牙设备状态并在状态变化时生成事件"""
         prev_exist = None
         while True:
-            exist = os.path.exists(self.DEVICE_PATH)
-            if prev_exist != exist or self._version_cache is None:
+            FingerbotApi._device_path = self.get_dongle_hci_path(self.DEVICE_NAME)
+            if FingerbotApi._device_path:
+                exist = os.path.exists(FingerbotApi._device_path)
+            else:
+                exist = False
+            if prev_exist != exist:
                 yield {"exist": exist}
                 prev_exist = exist
 
