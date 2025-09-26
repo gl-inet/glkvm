@@ -58,6 +58,7 @@ class FingerbotApi:
         1: (LOW_ANGLE_PUSH_TIME, LOW_ANGLE_PULL_TIME),
         2: (HIGH_ANGLE_PUSH_TIME, HIGH_ANGLE_PULL_TIME)
     }
+    __need_update = False
 
     def __init__(self) -> None:
         self._logger = logger
@@ -66,11 +67,20 @@ class FingerbotApi:
 
     def get_dongle_hci_path(self, target_product_name: str) -> Optional[str]:
         base_path = '/sys/class/bluetooth/'
-        for hci in os.listdir(base_path):
+        try:
+            hci_devices = os.listdir(base_path)
+        except OSError as e:
+            self._logger.warning(f'Cannot access {base_path}: {e}')
+            return None
+
+        for hci in hci_devices:
             hci_path = os.path.join(base_path, hci)
             device_link = os.path.join(hci_path, 'device')
 
-            if os.path.islink(device_link):
+            if not os.path.islink(device_link):
+                continue
+
+            try:
                 real_device_path = os.path.realpath(device_link)
                 cur_path = real_device_path
                 while cur_path != '/':
@@ -80,9 +90,12 @@ class FingerbotApi:
                             product_name = f.read().strip()
                         if product_name == target_product_name:
                             return hci_path
-                    except FileNotFoundError:
+                    except (FileNotFoundError, OSError):
                         pass
                     cur_path = os.path.dirname(cur_path)
+            except OSError as e:
+                self._logger.debug(f'Skipping invalid device {hci_path}: {e}')
+                continue
         return None
 
     async def get_state(self) -> dict:
@@ -100,9 +113,10 @@ class FingerbotApi:
                 exist = os.path.exists(FingerbotApi._device_path)
             else:
                 exist = False
-            if prev_exist != exist:
+            if self.__need_update or prev_exist != exist:
                 yield {"exist": exist}
                 prev_exist = exist
+                self.__need_update = False
 
                 if exist:
                     self._logger.info("Fingerbot device connected, reading battery and version info")
@@ -110,6 +124,9 @@ class FingerbotApi:
                     await self._read_version()
                     await self._read_battery()
             await sleep(1)
+
+    async def trigger_state(self) -> None:
+        self.__need_update = True
 
     @staticmethod
     def _is_press_time_valid(press_time: int) -> bool:
@@ -172,7 +189,7 @@ class FingerbotApi:
             stdout, stderr = await process.communicate()
 
             if process.returncode != 0:
-                self._logger.error(f"Fingerbot image-list command failed: {stderr.decode()}")
+
                 return None
 
             local_version = self._parse_version_from_output(stdout.decode())

@@ -45,6 +45,11 @@ async def read_file(path: str) -> str:
         return (await file.read())
 
 
+async def write_file(path: str, text: str) -> None:
+    async with aiofiles.open(path, "w") as file:
+        await file.write(text)
+
+
 # =====
 def run(coro: Coroutine, final: (Coroutine | None)=None) -> None:
     # https://github.com/aio-libs/aiohttp/blob/a1d4dac1d/aiohttp/web.py#L515
@@ -165,8 +170,8 @@ def create_deadly_task(name: str, coro: Coroutine) -> asyncio.Task:
             raise RuntimeError(f"Deadly task is dead: {name}")
         except asyncio.CancelledError:
             pass
-        except Exception as e:
-            logger.exception(f"Unhandled exception in deadly task, killing myself: {str(e)} ...")
+        except Exception:
+            logger.exception("Unhandled exception in deadly task %r, killing myself ...", name)
             pid = os.getpid()
             if pid == 1:
                 os._exit(1)  # Docker workaround  # pylint: disable=protected-access
@@ -206,6 +211,18 @@ async def wait_first(*aws: asyncio.Task) -> tuple[set[asyncio.Task], set[asyncio
     return (await asyncio.wait(list(aws), return_when=asyncio.FIRST_COMPLETED))
 
 
+
+async def spawn_and_follow(*coros: Coroutine) -> None:
+    tasks: list[asyncio.Task] = list(map(asyncio.create_task, coros))
+    try:
+        await asyncio.gather(*tasks)
+    except Exception:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 # =====
 async def close_writer(writer: asyncio.StreamWriter) -> bool:
     closing = writer.is_closing()
@@ -232,25 +249,26 @@ async def close_writer(writer: asyncio.StreamWriter) -> bool:
 # =====
 class AioNotifier:
     def __init__(self) -> None:
-        self.__queue: "asyncio.Queue[None]" = asyncio.Queue()
+        self.__queue: "asyncio.Queue[int]" = asyncio.Queue()
 
-    def notify(self) -> None:
-        self.__queue.put_nowait(None)
+    def notify(self, mask: int=0) -> None:
+        self.__queue.put_nowait(mask)
 
-    async def wait(self, timeout: (float | None)=None) -> None:
+    async def wait(self, timeout: (float | None)=None) -> int:
+        mask = 0
         if timeout is None:
-            await self.__queue.get()
+            mask = await self.__queue.get()
         else:
             try:
-                await asyncio.wait_for(
+                mask = await asyncio.wait_for(
                     asyncio.ensure_future(self.__queue.get()),
                     timeout=timeout,
                 )
             except asyncio.TimeoutError:
-                return  # False
+                return -1
         while not self.__queue.empty():
-            await self.__queue.get()
-        # return True
+            mask |= await self.__queue.get()
+        return mask
 
 
 # =====
@@ -296,7 +314,7 @@ class AioExclusiveRegion:
     def is_busy(self) -> bool:
         return self.__busy
 
-    async def enter(self) -> None:
+    def enter(self) -> None:
         if not self.__busy:
             self.__busy = True
             try:
@@ -308,22 +326,22 @@ class AioExclusiveRegion:
             return
         raise self.__exc_type()
 
-    async def exit(self) -> None:
+    def exit(self) -> None:
         self.__busy = False
         if self.__notifier:
             self.__notifier.notify()
 
-    async def __aenter__(self) -> None:
-        await self.enter()
+    def __enter__(self) -> None:
+        self.enter()
 
-    async def __aexit__(
+    def __exit__(
         self,
         _exc_type: type[BaseException],
         _exc: BaseException,
         _tb: types.TracebackType,
     ) -> None:
 
-        await self.exit()
+        self.exit()
 
 
 async def run_region_task(
@@ -338,7 +356,7 @@ async def run_region_task(
 
     async def wrapper() -> None:
         try:
-            async with region:
+            with region:
                 entered.set_result(None)
                 await func(*args, **kwargs)
         except region.get_exc_type():

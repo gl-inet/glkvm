@@ -88,12 +88,12 @@ class RedfishApi:
 
     @exposed_http("GET", "/redfish/v1/Systems/0")
     async def __server_handler(self, _: Request) -> Response:
-        (atx_state, meta_state) = await asyncio.gather(*[
+        (atx_state, info_state) = await asyncio.gather(*[
             self.__atx.get_state(),
-            self.__info_manager.get_submanager("meta").get_state(),
+            self.__info_manager.get_state(["meta"]),
         ])
         try:
-            host = str(meta_state.get("server", {})["host"])  # type: ignore
+            host = str(info_state["meta"].get("server", {})["host"])
         except Exception:
             host = ""
         return make_json_response({
@@ -102,13 +102,25 @@ class RedfishApi:
             "Actions": {
                 "#ComputerSystem.Reset": {
                     "ResetType@Redfish.AllowableValues": list(self.__actions),
-                    "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset"
+                    "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset",
+                },
+                "
+                    "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.SetDefaultBootOrder",
                 },
             },
             "Id": "0",
             "HostName": host,
             "PowerState": ("On" if atx_state["leds"]["power"] else "Off"),  # type: ignore
+            "Boot": {
+                "BootSourceOverrideEnabled": "Disabled",
+                "BootSourceOverrideTarget": None,
+            },
         }, wrap_result=False)
+
+    @exposed_http("PATCH", "/redfish/v1/Systems/0")
+    async def __patch_handler(self, _: Request) -> Response:
+
+        return Response(body=None, status=204)
 
     @exposed_http("POST", "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset")
     async def __power_handler(self, req: Request) -> Response:

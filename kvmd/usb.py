@@ -57,3 +57,11 @@ G_PROFILE = f"configs/{G_PROFILE_NAME}"
 def get_gadget_path(gadget: str, *parts: str) -> str:
     get_logger().info(f"get_gadget_path: {gadget}, {parts}")
     return os.path.join(f"{env.SYSFS_PREFIX}/sys/kernel/config/usb_gadget", gadget, *parts)
+
+
+
+def make_inquiry_string(vendor: str, product: str, revision: str) -> str:
+
+
+
+    return "%-8.8s%-16.16s%-4.4s" % (vendor, product, revision)

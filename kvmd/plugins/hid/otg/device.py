@@ -73,6 +73,7 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
         self.__state_flags = aiomulti.AioSharedFlags({"online": True, **initial_state}, notifier)
         self.__stop_event = multiprocessing.Event()
         self.__no_device_reported = False
+        self.__write_select_fail_count = 0
 
         self.__logger: (logging.Logger | None) = None
 
@@ -171,6 +172,10 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
             return self.__logger
         return get_logger()
 
+    def __is_power_of_two(self, n: int) -> bool:
+        """检查一个数是否是2的N次方"""
+        return n > 0 and (n & (n - 1)) == 0
+
     def __is_udc_configured(self) -> bool:
         with open(self.__udc_state_path) as file:
             return (file.read().strip().lower() == "configured")
@@ -262,12 +267,21 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
         if self.__fd >= 0:
             try:
                 if select.select([], [self.__fd], [], self.__select_timeout)[1]:
+
+                    if self.__write_select_fail_count > 0:
+                        logger.info("HID-%s write select recovered after %d failures",
+                                   self.__name, self.__write_select_fail_count)
+                        self.__write_select_fail_count = 0
                     # Закомментировано, потому что иногда запись доступна, но устройство отключено
                     # self.__state_flags.update(online=True)
                     return True
                 else:
-                    # Если запись недоступна, то скорее всего устройство отключено
-                    logger.debug("HID-%s is busy/unplugged (write select)", self.__name)
+
+                    self.__write_select_fail_count += 1
+
+                    if self.__is_power_of_two(self.__write_select_fail_count):
+                        logger.debug("HID-%s is busy/unplugged (write select) [%d times]",
+                                   self.__name, self.__write_select_fail_count)
             except Exception as ex:
                 logger.error("Can't select() for write HID-%s: %s", self.__name, tools.efmt(ex))
 

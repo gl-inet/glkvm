@@ -12,7 +12,7 @@ import json
 from ....logging import get_logger
 from .... import htclient
 
-from ....htserver import exposed_http, make_json_exception, make_json_response, start_streaming, stream_json, stream_json_exception
+from ....htserver import exposed_http, make_json_exception, make_json_response, start_streaming, stream_json, stream_json_exception, BadRequestError
 from ....validators.basic import valid_bool
 from ....validators.net import valid_url
 
@@ -83,6 +83,24 @@ class UpgradeApi:
 
 
         return bytes.fromhex(edid_str)
+    def __check_free_space(self, path: str, required_size: int) -> tuple[bool, str]:
+        """检查指定路径所在分区的剩余空间是否足够
+
+        Args:
+            path: 要检查的路径
+            required_size: 所需空间大小(字节)
+
+        Returns:
+            tuple[bool, str]: (是否有足够空间, 错误信息)
+        """
+        try:
+            statvfs = os.statvfs(path)
+            free_space = statvfs.f_frsize * statvfs.f_bavail
+            if free_space < required_size:
+                return False, f"Not enough space in {path}. Required: {required_size} bytes, Available: {free_space} bytes"
+            return True, ""
+        except Exception as e:
+            return False, f"Failed to check free space: {str(e)}"
 
     @exposed_http("POST", "/upgrade/upload")
     async def __upload_handler(self, request: web.Request) -> web.Response:
@@ -93,6 +111,17 @@ class UpgradeApi:
 
             self.__total_firmware_size = 0
             size = 0
+
+
+            content_length = request.headers.get('Content-Length')
+            if content_length is None:
+                return make_json_exception("Content-Length header is required", 400)
+            content_length = int(content_length)
+            get_logger(0).info("Content-Length: %s", content_length)
+            has_space, error_msg = self.__check_free_space(UPGRADE_DIR, content_length)
+            if not has_space:
+                return make_json_exception(error_msg, 413)
+
 
             with open(f"{UPGRADE_DIR}{UPGRADE_FILE}", "wb") as f:
                 while True:
@@ -113,7 +142,8 @@ class UpgradeApi:
     @exposed_http("GET", "/upgrade/version")
     async def __version_handler(self, request: web.Request) -> web.Response:
         version = await self.__update_engine.get_local_verion()
-        return make_json_response({"version": version})
+        model = await self.__update_engine.get_local_model()
+        return make_json_response({"version": version, "model": model})
 
     @exposed_http("GET", "/upgrade/reboot")
     async def __reboot_handler(self, request: web.Request) -> web.Response:
@@ -126,6 +156,16 @@ class UpgradeApi:
 
         save_config_value = str(save_config).lower() if save_config is not None else "true"
         should_save = save_config_value not in ["false", "0"]
+
+
+        validation_result = await self.__update_engine.validate_firmware()
+        if validation_result["status"] != "valid":
+
+            return make_json_response({
+                "status": "Upgrade failed",
+                "stdout": validation_result.get("stdout", ""),
+                "stderr": validation_result.get("stderr", validation_result.get("message", "Firmware validation failed"))
+            })
 
         result = await self.__update_engine.start_upgrade(save_config=should_save)
         if result.get("status") == "Upgrade started":
@@ -201,7 +241,7 @@ class UpgradeApi:
 
 
             if not self.__validate_edid(edid_str):
-                return make_json_exception("Invalid EDID format", 400)
+                raise BadRequestError("Invalid EDID format")
 
 
             edid_bytes = self.__convert_edid_to_bytes(edid_str)
@@ -225,13 +265,15 @@ class UpgradeApi:
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                return make_json_exception(f"Failed to execute lt6911c_upgrade: {stderr.decode()}", 500)
+                raise BadRequestError(f"Failed to execute lt6911c_upgrade: {stderr.decode()}")
 
             return make_json_response({
                 "status": "success",
                 "message": "EDID data has been written and applied"
             })
 
+        except BadRequestError as ex:
+            return make_json_exception(ex, 400)
         except Exception as ex:
             return make_json_exception(str(ex), 500)
 
@@ -297,8 +339,17 @@ class UpgradeApi:
             with zipfile.ZipFile(zip_buffer, 'a', zipfile.ZIP_DEFLATED, False) as zip_file:
                 for _, log_file in log_commands.items():
                     if os.path.exists(log_file):
+                        arcname = os.path.basename(log_file)
+                        try:
 
-                        zip_file.write(log_file, os.path.basename(log_file))
+                            zip_file.write(log_file, arcname)
+                        except Exception as e:
+
+                            get_logger(0).warning(f"Failed to add {log_file} with original method: {e}, using fixed timestamp")
+                            info = zipfile.ZipInfo(arcname)
+                            info.date_time = (2025, 1, 1, 0, 0, 0)
+                            with open(log_file, "rb") as f:
+                                zip_file.writestr(info, f.read())
 
 
             response = web.StreamResponse()
@@ -342,7 +393,7 @@ class UpgradeApi:
 
                 version, firmware_filename = await self.__update_engine.get_list_sha256()
                 if not firmware_filename:
-                    raise Exception("Unable to get firmware filename")
+                    raise BadRequestError("Unable to get firmware filename")
 
 
                 firmware_url = f"{self.__update_engine.get_base_url()}/{firmware_filename}"
@@ -355,7 +406,7 @@ class UpgradeApi:
                 ) as remote:
                     size = remote.content_length
                     if not size:
-                        raise Exception("Unable to get firmware size")
+                        raise BadRequestError("Unable to get firmware size")
 
 
                     response = make_json_response({"size": size})
@@ -378,9 +429,13 @@ class UpgradeApi:
 
                     return response
 
-            except Exception as ex:
+            except BadRequestError as ex:
                 if isinstance(ex, aiohttp.ClientError):
                     return make_json_exception(ex, 400)
+            except aiohttp.ClientError as ex:
+                if isinstance(ex, aiohttp.ClientError):
+                    return make_json_exception(ex, 400)
+            except Exception as ex:
                 raise
 
 class UpdateEngine:
@@ -396,17 +451,32 @@ class UpdateEngine:
         local_dict = dict(line.split('=') for line in local_content.splitlines())
         return local_dict.get('RK_VERSION', '')
 
+    async def get_local_model(self):
+        with open("/etc/version", "r") as f:
+            local_content = f.read().strip()
+        local_dict = dict(line.split('=') for line in local_content.splitlines())
+        return local_dict.get('RK_MODEL', '')
+
     async def get_list_sha256(self)->tuple[str,str]:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(self.__list_sha256_url) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    first_line = content.splitlines()[0]
-                    version = first_line.split()[0]
-                    firmware = first_line.split()[1]
-                    return version,firmware
-                else:
-                    return "", ""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(self.__list_sha256_url) as response:
+                    if response.status == 200:
+                        content = await response.text()
+                        first_line = content.splitlines()[0]
+                        version = first_line.split()[0]
+                        firmware = first_line.split()[1]
+                        return version,firmware
+                    else:
+                        get_logger(0).error(f"Failed to get list-sha256: {response.status}")
+                        return "", ""
+        except asyncio.CancelledError:
+
+            get_logger(0).warning("List-sha256 request was cancelled")
+            return "", ""
+        except Exception as e:
+            get_logger(0).error(f"Error getting list-sha256: {str(e)}")
+            return "", ""
 
     def get_base_url(self) -> str:
         """获取base_url"""
@@ -425,6 +495,10 @@ class UpdateEngine:
                     else:
                         get_logger(0).error(f"Failed to get metadata: {response.status}")
                         return {}
+        except asyncio.CancelledError:
+
+            get_logger(0).warning("Metadata request was cancelled")
+            return {}
         except Exception as e:
             get_logger(0).error(f"Error getting metadata: {str(e)}")
             return {}
@@ -472,6 +546,10 @@ class UpdateEngine:
                             result["error"] = "Unable to get server version information"
                     else:
                         result["error"] = f"Server returned status code: {response.status}"
+        except asyncio.CancelledError:
+
+            result["error"] = "Request was cancelled"
+            get_logger(0).warning("Version comparison request was cancelled")
         except Exception as e:
             result["error"] = f"Failed to fetch server version: {str(e)}"
 
@@ -490,3 +568,62 @@ class UpdateEngine:
             return {"status": "Upgrade started", "stdout": stdout.decode(), "stderr": stderr.decode()}
         else:
             return {"status": "Upgrade failed", "stdout": stdout.decode(), "stderr": stderr.decode()}
+
+    async def validate_firmware(self) -> Dict[str, Any]:
+        """
+        校验固件文件的有效性
+        使用 check_image_validity 命令校验 /userdata/update.img 文件
+
+        Returns:
+            Dict[str, Any]: 包含校验结果的字典
+                - status: "valid" 或 "invalid" 或 "error"
+                - message: 详细信息
+                - stdout: 命令输出
+                - stderr: 错误输出
+        """
+        try:
+
+            firmware_path = f"{UPGRADE_DIR}{UPGRADE_FILE}"
+            if not os.path.exists(firmware_path):
+                return {
+                    "status": "error",
+                    "message": "Firmware file does not exist",
+                    "stdout": "",
+                    "stderr": ""
+                }
+
+
+            cmd = f"check_image_validity {firmware_path}"
+            proc = await asyncio.create_subprocess_shell(
+                cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
+
+            stdout_str = stdout.decode().strip()
+            stderr_str = stderr.decode().strip()
+
+            if proc.returncode == 0:
+                return {
+                    "status": "valid",
+                    "message": "Firmware validation successful",
+                    "stdout": stdout_str,
+                    "stderr": stderr_str
+                }
+            else:
+                return {
+                    "status": "invalid",
+                    "message": "Firmware validation failed",
+                    "stdout": stdout_str,
+                    "stderr": stderr_str
+                }
+
+        except Exception as e:
+            get_logger(0).error(f"Error validating firmware: {str(e)}")
+            return {
+                "status": "error",
+                "message": f"Error during firmware validation: {str(e)}",
+                "stdout": "",
+                "stderr": ""
+            }

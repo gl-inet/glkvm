@@ -85,7 +85,7 @@ class MouseProcess(BaseDeviceProcess):
         self._clear_queue()
         self._queue_event(ResetEvent())
 
-    def send_button_event(self, button: str, state: bool) -> None:
+    def send_button_event(self, button: int, state: bool) -> None:
         self._queue_event(MouseButtonEvent(button, state))
 
     def send_move_event(self, to_x: int, to_y: int) -> None:
@@ -153,7 +153,6 @@ class MouseProcess(BaseDeviceProcess):
             move_x = self.__x
             move_y = self.__y
         else:
-            assert self.__x == self.__y == 0
             if relative_event is not None:
                 move_x = relative_event.delta_x
                 move_y = relative_event.delta_y
@@ -177,5 +176,3 @@ class MouseProcess(BaseDeviceProcess):
 
     def __clear_state(self) -> None:
         self.__pressed_buttons = 0
-        self.__x = 0
-        self.__y = 0

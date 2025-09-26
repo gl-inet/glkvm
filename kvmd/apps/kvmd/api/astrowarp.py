@@ -35,10 +35,14 @@ from ....htserver import BadRequestError
 from ....htserver import exposed_http
 from ....htserver import make_json_response
 from ....htserver import make_json_exception
+from ....logging import get_logger
+
+logger = get_logger()
 
 ASTROWARP_STATUS_PATH = "/var/run/cloud/bindinfo"
 ASTROWARP_INIT_PATH = "/etc/init.d/S99gl-cloud"
 ASTROWARP_CONFIG_PATH = "/etc/glinet/gl-cloud.conf"
+CLOUD_BIND_LINK_PATH = "/var/run/cloud/bindlink"
 
 
 
@@ -47,6 +51,7 @@ class AstrowarpApi:
     SN_PATH = "/proc/gl-hw-info/device_sn"
     DDNS_PATH = "/proc/gl-hw-info/device_ddns"
     def __init__(self) -> None:
+        self._logger = logger
         pass
 
 
@@ -122,7 +127,7 @@ class AstrowarpApi:
             self._logger.error(f"Error executing command: {e}")
             raise BadRequestError()
 
-    @exposed_http("GET", "/astrowarp/unbind")
+    @exposed_http("POST", "/astrowarp/unbind")
     async def __unbind_handler(self, req: Request) -> Response:
         try:
 
@@ -131,3 +136,15 @@ class AstrowarpApi:
         except Exception as e:
             self._logger.error(f"Error executing command: {e}")
             return make_json_exception(BadGatewayError(),502)
+
+    @exposed_http("GET", "/astrowarp/get_bind_link")
+    async def __get_bind_link(self, req: Request) -> Response:
+        try:
+            await self._run_command("/usr/bin/eco /usr/bin/get_bindlink")
+            with open(CLOUD_BIND_LINK_PATH, "r") as file:
+                link_info = file.read()
+                link_info_json = json.loads(link_info)
+                return make_json_response(link_info_json)
+        except Exception as e:
+            self._logger.error(e)
+            return make_json_exception(NotFoundError(), 404)

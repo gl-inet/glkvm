@@ -2,6 +2,8 @@ import asyncio
 import asyncio.subprocess
 import socket
 import dataclasses
+import os
+import json
 
 import netifaces
 
@@ -21,6 +23,7 @@ class _Netcfg:
     nat_type:  StunNatType = dataclasses.field(default=StunNatType.ERROR)
     src_ip:    str = dataclasses.field(default="")
     ext_ip:    str = dataclasses.field(default="")
+    stun_host: str = dataclasses.field(default="")
     stun_ip:   str = dataclasses.field(default="")
     stun_port: int = dataclasses.field(default=0)
 
@@ -63,6 +66,11 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         self.__janus_task: (asyncio.Task | None) = None
         self.__janus_proc: (asyncio.subprocess.Process | None) = None  # pylint: disable=no-member
 
+
+        self.__turn_file_path = "/tmp/turnserver.json"
+        self.__turn_file_mtime: (float | None) = None
+        self.__turn_data: (dict | None) = None
+
     def run(self) -> None:
         logger = get_logger(0)
         logger.info("Starting Janus Runner ...")
@@ -71,10 +79,52 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
 
     # =====
 
+    def __get_turn_file_mtime(self) -> (float | None):
+        """获取 turnserver.json 文件的修改时间"""
+        try:
+            if os.path.exists(self.__turn_file_path):
+                return os.path.getmtime(self.__turn_file_path)
+            return None
+        except Exception as ex:
+            get_logger().error("Error getting turn file mtime: %s", tools.efmt(ex))
+            return None
+
+    def __read_turn_file(self) -> (dict | None):
+        """读取 turnserver.json 文件内容"""
+        try:
+            if not os.path.exists(self.__turn_file_path):
+                return None
+
+            with open(self.__turn_file_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as ex:
+            get_logger().error("Error reading turn file: %s", tools.efmt(ex))
+            return None
+
+    def __is_turn_config_changed(self) -> bool:
+        """检查 TURN 配置是否发生变化"""
+        current_mtime = self.__get_turn_file_mtime()
+
+
+        if current_mtime != self.__turn_file_mtime:
+            self.__turn_file_mtime = current_mtime
+            current_data = self.__read_turn_file()
+
+
+            if current_data != self.__turn_data:
+                self.__turn_data = current_data
+                return True
+
+        return False
+
     async def __run(self) -> None:
         netcfg_diff_times = 0
         logger = get_logger(0)
         logger.info("Probbing the network first time ...")
+
+
+        self.__turn_file_mtime = self.__get_turn_file_mtime()
+        self.__turn_data = self.__read_turn_file()
 
         prev_netcfg: (_Netcfg | None) = None
         while True:
@@ -88,6 +138,16 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
             if retry != 0 and netcfg.ext_ip:
                 logger.info("I'm fine, continue working ...")
 
+
+
+
+
+
+
+
+
+
+
             if prev_netcfg is None:
                 logger.info("Initializing Janus with %s ...", netcfg)
                 if netcfg.src_ip:
@@ -98,20 +158,37 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     await self.__stop_janus()
                 prev_netcfg = netcfg
             elif _Netcfg.is_network_changed(prev_netcfg, netcfg):
-                if netcfg_diff_times <= 6:
+
+                should_restart_immediately = (
+                    prev_netcfg.nat_type == StunNatType.ERROR or
+                    not prev_netcfg.ext_ip
+                )
+
+                if should_restart_immediately:
+                    logger.info("Previous NAT type was ERROR or no public IP, restarting Janus immediately for %s", netcfg)
+                    netcfg_diff_times = 0
+                    prev_netcfg = netcfg
+                    if netcfg.src_ip:
+                        await self.__stop_janus()
+                        await self.__start_janus(netcfg)
+                    else:
+                        logger.error("Empty src_ip; stopping Janus ...")
+                        await self.__stop_janus()
+                elif netcfg_diff_times <= 6:
                     netcfg_diff_times += 1
                     logger.info("Public IP address changed from %s %s to %s %s, but it's not stable yet, waiting %d seconds ...", prev_netcfg.ext_ip, prev_netcfg.nat_type, netcfg.ext_ip, netcfg.nat_type, self.__check_interval)
                     await asyncio.sleep(self.__check_interval)
                     continue
-                netcfg_diff_times = 0
-                prev_netcfg = netcfg
-                logger.info("Got new %s", netcfg)
-                if netcfg.src_ip:
-                    await self.__stop_janus()
-                    await self.__start_janus(netcfg)
                 else:
-                    logger.error("Empty src_ip; stopping Janus ...")
-                    await self.__stop_janus()
+                    netcfg_diff_times = 0
+                    prev_netcfg = netcfg
+                    logger.info("Got new %s", netcfg)
+                    if netcfg.src_ip:
+                        await self.__stop_janus()
+                        await self.__start_janus(netcfg)
+                    else:
+                        logger.error("Empty src_ip; stopping Janus ...")
+                        await self.__stop_janus()
             else:
                 netcfg_diff_times = 0
             await asyncio.sleep(self.__check_interval)
@@ -197,7 +274,10 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
             part.format(**placeholders)
             for part in cmd
         ]
-        self.__janus_proc = await aioproc.run_process(cmd)
+        self.__janus_proc = await aioproc.run_process(
+            cmd=cmd,
+            env={"JANUS_USTREAMER_WEB_ICE_URL": f"stun:{netcfg.stun_host}:{netcfg.stun_port}"},
+        )
         get_logger(0).info("Started Janus pid=%d: %s", self.__janus_proc.pid, tools.cmdfmt(cmd))
 
     async def __kill_janus_proc(self) -> None:

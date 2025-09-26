@@ -102,31 +102,45 @@ def _check_config(config: Section) -> None:
 
 # =====
 class _GadgetConfig:
-    def __init__(self, gadget_path: str, profile_path: str, meta_path: str) -> None:
+    def __init__(self, gadget_path: str, profile_path: str, meta_path: str, eps: int) -> None:
         self.__gadget_path = gadget_path
         self.__profile_path = profile_path
         self.__meta_path = meta_path
+        self.__eps_max = eps
+        self.__eps_used = 0
         self.__hid_instance = 0
         self.__msd_instance = 0
         _mkdir(meta_path)
 
-    def add_serial(self, start: bool) -> None:
-        func = "acm.usb0"
-        func_path = join(self.__gadget_path, "functions", func)
-        _mkdir(func_path)
+    def add_audio_mic(self, start: bool) -> None:
+        eps = 2
+        func = "uac2.usb0"
+        func_path = self.__create_function(func)
+        _write(join(func_path, "c_chmask"), 0)
+        _write(join(func_path, "p_chmask"), 0b11)
+        _write(join(func_path, "p_srate"), 48000)
+        _write(join(func_path, "p_ssize"), 2)
         if start:
-            _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, "Serial Port")
+            self.__start_function(func, eps)
+        self.__create_meta(func, "Microphone", eps)
+
+    def add_serial(self, start: bool) -> None:
+        eps = 3
+        func = "acm.usb0"
+        self.__create_function(func)
+        if start:
+            self.__start_function(func, eps)
+        self.__create_meta(func, "Serial Port", eps)
 
     def add_ethernet(self, start: bool, driver: str, host_mac: str, kvm_mac: str) -> None:
+        eps = 3
         if host_mac and kvm_mac and host_mac == kvm_mac:
             raise RuntimeError("Ethernet host_mac should not be equal to kvm_mac")
         real_driver = driver
         if driver == "rndis5":
             real_driver = "rndis"
         func = f"{real_driver}.usb0"
-        func_path = join(self.__gadget_path, "functions", func)
-        _mkdir(func_path)
+        func_path = self.__create_function(func)
         if host_mac:
             _write(join(func_path, "host_addr"), host_mac)
         if kvm_mac:
@@ -146,29 +160,29 @@ class _GadgetConfig:
                 _write(join(func_path, "os_desc/interface.rndis/sub_compatible_id"), "5162001")
             _symlink(self.__profile_path, join(self.__gadget_path, "os_desc", usb.G_PROFILE_NAME))
         if start:
-            _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, "Ethernet")
-
+            self.__start_function(func, eps)
+        self.__create_meta(func, "Ethernet", eps)
 
     def add_rndis(self, start: bool) -> None:
+        eps = 3
         func = "rndis.usb0"
         func_path = join(self.__gadget_path, "functions", func)
         _mkdir(func_path)
         if start:
             _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, "RNDIS")
+        self.__create_meta(func, "RNDIS",esp)
 
     def add_keyboard(self, start: bool, remote_wakeup: bool) -> None:
         self.__add_hid("Keyboard", start, remote_wakeup, make_keyboard_hid())
 
     def add_mouse(self, start: bool, remote_wakeup: bool, absolute: bool, horizontal_wheel: bool) -> None:
-        name = ("Absolute" if absolute else "Relative") + " Mouse"
-        self.__add_hid(name, start, remote_wakeup, make_mouse_hid(absolute, horizontal_wheel))
+        desc = ("Absolute" if absolute else "Relative") + " Mouse"
+        self.__add_hid(desc, start, remote_wakeup, make_mouse_hid(absolute, horizontal_wheel))
 
-    def __add_hid(self, name: str, start: bool, remote_wakeup: bool, hid: Hid) -> None:
+    def __add_hid(self, desc: str, start: bool, remote_wakeup: bool, hid: Hid) -> None:
+        eps = 1
         func = f"hid.usb{self.__hid_instance}"
-        func_path = join(self.__gadget_path, "functions", func)
-        _mkdir(func_path)
+        func_path = self.__create_function(func)
         _write(join(func_path, "no_out_endpoint"), "1", optional=True)
         if remote_wakeup:
             _write(join(func_path, "wakeup_on_write"), "1", optional=True)
@@ -177,24 +191,36 @@ class _GadgetConfig:
         _write(join(func_path, "report_length"), hid.report_length)
         _write_bytes(join(func_path, "report_desc"), hid.report_descriptor)
         if start:
-            _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, name)
+            self.__start_function(func, eps)
+        self.__create_meta(func, desc, eps)
         self.__hid_instance += 1
 
-    def add_msd(self, start: bool, user: str, stall: bool, cdrom: bool, rw: bool, removable: bool, fua: bool) -> None:
+    def add_msd(
+        self,
+        start: bool,
+        user: str,
+        stall: bool,
+        cdrom: bool,
+        rw: bool,
+        removable: bool,
+        fua: bool,
+        inquiry_string_cdrom: str,
+        inquiry_string_flash: str,
+    ) -> None:
 
+
+
+
+        eps = 2
         func = f"mass_storage.{self.__msd_instance}"
-        func_path = join(self.__gadget_path, "functions", func)
-        _mkdir(func_path)
-
-
+        func_path = self.__create_function(func)
         _write(join(func_path, "stall"), int(stall))
         _write(join(func_path, "lun.0/cdrom"), int(cdrom))
         _write(join(func_path, "lun.0/ro"), int(not rw))
         _write(join(func_path, "lun.0/removable"), int(removable))
         _write(join(func_path, "lun.0/nofua"), int(not fua))
 
-
+        _write(join(func_path, "lun.0/inquiry_string"), inquiry_string_flash)
         if user != "root":
             _chown(join(func_path, "lun.0/cdrom"), user)
             _chown(join(func_path, "lun.0/ro"), user)
@@ -203,17 +229,30 @@ class _GadgetConfig:
 
 
         if start:
-            _symlink(func_path, join(self.__profile_path, func))
-
-
-        name = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else f"Mass Storage Disk
-        self.__create_meta(func, name)
-
-
+            self.__start_function(func, eps)
+        desc = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else f"Mass Storage Disk
+        self.__create_meta(func, desc, eps)
         self.__msd_instance += 1
 
-    def __create_meta(self, func: str, name: str) -> None:
-        _write(join(self.__meta_path, f"{func}@meta.json"), json.dumps({"func": func, "name": name}))
+    def __create_function(self, func: str) -> str:
+        func_path = join(self.__gadget_path, "functions", func)
+        _mkdir(func_path)
+        return func_path
+
+    def __start_function(self, func: str, eps: int) -> None:
+        func_path = join(self.__gadget_path, "functions", func)
+        if self.__eps_max - self.__eps_used >= eps:
+            _symlink(func_path, join(self.__profile_path, func))
+            self.__eps_used += eps
+        else:
+            get_logger().info("Will not be started: No available endpoints")
+
+    def __create_meta(self, func: str, desc: str, eps: int) -> None:
+        _write(join(self.__meta_path, f"{func}@meta.json"), json.dumps({
+            "function": func,
+            "description": desc,
+            "endpoints": eps,
+        }))
 
 
 def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,too-many-branches
@@ -257,23 +296,16 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
 
     profile_path = join(gadget_path, usb.G_PROFILE)
     _mkdir(profile_path)
-    _mkdir(join(profile_path, "strings/0x409"))
-    _write(join(profile_path, "strings/0x409/configuration"), f"Config 1: {config.otg.config}")
+    if config.otg.config:
+        _mkdir(join(profile_path, "strings/0x409"))
+        _write(join(profile_path, "strings/0x409/configuration"), config.otg.config)
     _write(join(profile_path, "MaxPower"), config.otg.max_power)
     if config.otg.remote_wakeup:
         # XXX: Should we use MaxPower=100 with Remote Wakeup?
         _write(join(profile_path, "bmAttributes"), "0xA0")
 
-    gc = _GadgetConfig(gadget_path, profile_path, config.otg.meta)
+    gc = _GadgetConfig(gadget_path, profile_path, config.otg.meta, config.otg.endpoints)
     cod = config.otg.devices
-
-    if cod.serial.enabled:
-        logger.info("===== Serial =====")
-        gc.add_serial(cod.serial.start)
-
-    if cod.ethernet.enabled:
-        logger.info("===== Ethernet =====")
-        gc.add_ethernet(**cod.ethernet._unpack(ignore=["enabled"]))
 
     if cod.rndis.enabled:
         logger.info("===== RNDIS =====")
@@ -283,25 +315,58 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         logger.info("===== HID-Keyboard =====")
         gc.add_keyboard(cod.hid.keyboard.start, config.otg.remote_wakeup)
         logger.info("===== HID-Mouse =====")
-        gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, config.kvmd.hid.mouse.absolute, config.kvmd.hid.mouse.horizontal_wheel)
+        ckhm = config.kvmd.hid.mouse
+        gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, ckhm.absolute, ckhm.horizontal_wheel)
         if config.kvmd.hid.mouse_alt.device:
             logger.info("===== HID-Mouse-Alt =====")
-            gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, (not config.kvmd.hid.mouse.absolute), config.kvmd.hid.mouse.horizontal_wheel)
+            gc.add_mouse(cod.hid.mouse_alt.start, config.otg.remote_wakeup, (not ckhm.absolute), ckhm.horizontal_wheel)
 
     if config.kvmd.msd.type == "otg":
         logger.info("===== MSD =====")
         logger.info("===== MSD Extra:=====", cod.drives.default._unpack())
 
         if cod.msd.default.cdrom:
-            gc.add_msd(cod.msd.start, config.otg.user, **cod.msd.default._unpack())
+            gc.add_msd(
+                start=cod.msd.start,
+                user=config.otg.user,
+                inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
+                inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
+                **cod.msd.default._unpack(ignore="inquiry_string"),
+            )
         else:
-            gc.add_msd(cod.msd.start, config.otg.user, stall=False, cdrom=True, rw=False, removable=True, fua=True)
+            gc.add_msd(
+                cod.msd.start, config.otg.user, stall=False, cdrom=True, rw=False, removable=True, fua=True,
+                inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
+                inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
+                )
 
-        gc.add_msd(cod.msd.start, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True)
+        gc.add_msd(
+            cod.msd.start, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True,
+            inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
+            inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
+            )
         if cod.drives.enabled:
             for count in range(cod.drives.count):
                 logger.info("===== MSD Extra: %d =====", count + 1)
-                gc.add_msd(cod.drives.start, "root", **cod.drives.default._unpack())
+                gc.add_msd(
+                    start=cod.drives.start,
+                    user="root",
+                    inquiry_string_cdrom=usb.make_inquiry_string(**cod.drives.default.inquiry_string.cdrom._unpack()),
+                    inquiry_string_flash=usb.make_inquiry_string(**cod.drives.default.inquiry_string.flash._unpack()),
+                    **cod.drives.default._unpack(ignore="inquiry_string"),
+                )
+
+    if cod.ethernet.enabled:
+        logger.info("===== Ethernet =====")
+        gc.add_ethernet(**cod.ethernet._unpack(ignore=["enabled"]))
+
+    if cod.serial.enabled:
+        logger.info("===== Serial =====")
+        gc.add_serial(cod.serial.start)
+
+    if cod.audio.enabled:
+        logger.info("===== Microphone =====")
+        gc.add_audio_mic(cod.audio.start)
 
     logger.info("===== Preparing complete =====")
 

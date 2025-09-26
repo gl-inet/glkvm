@@ -18,6 +18,7 @@ class Plugin(BaseAtx):
         self.__atxpower_bin = "/usr/sbin/atxpower"
         self.__notifier = aiotools.AioNotifier()
         self.__region = aiotools.AioExclusiveRegion(AtxIsBusyError, self.__notifier)
+        self.__need_update = False
 
     async def get_state(self) -> dict:
         try:
@@ -76,6 +77,9 @@ class Plugin(BaseAtx):
                 },
             }
 
+    async def trigger_state(self) -> None:
+        self.__need_update = True
+
     async def poll_state(self) -> AsyncGenerator[dict, None]:
         prev_device_exists = os.path.exists(self.__device)
         prev_state = await self.get_state()
@@ -88,10 +92,11 @@ class Plugin(BaseAtx):
 
                 if current_device_exists != prev_device_exists or current_device_exists:
                     state = await self.get_state()
-                    if state != prev_state:
+                    if self.__need_update or state != prev_state:
                         get_logger(0).info(f"ATX状态变化: {state}")
                         yield state
                         prev_state = state
+                        self.__need_update = False
 
                 prev_device_exists = current_device_exists
             except Exception as e:

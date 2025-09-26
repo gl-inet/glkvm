@@ -104,3 +104,8 @@ def valid_stream_h264_bitrate(arg: Any) -> int:
 
 def valid_stream_h264_gop(arg: Any) -> int:
     return int(valid_number(arg, min=0, max=240, name="stream H264 GOP"))
+
+
+def valid_stream_zero_delay(arg: Any) -> bool:
+    from .basic import valid_bool
+    return valid_bool(arg)

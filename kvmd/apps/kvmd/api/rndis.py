@@ -1,7 +1,9 @@
 from typing import Dict
+import asyncio
 
 from aiohttp.web import Request
 from aiohttp.web import Response
+from typing import AsyncGenerator
 
 
 from ....validators.basic import valid_bool
@@ -70,3 +72,14 @@ class RndisApi:
         return {
             "running": self.running
         }
+
+    async def trigger_state(self) -> None:
+        pass
+
+    async def poll_state(self) -> AsyncGenerator[dict, None]:
+        prev_running = None
+        while True:
+            if self.running != prev_running:
+                yield self.get_state()
+                prev_running = self.running
+            await asyncio.sleep(1)

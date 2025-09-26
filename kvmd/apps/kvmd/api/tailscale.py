@@ -241,6 +241,88 @@ class TailscaleApi:
             self._logger.error(f"Failed to write config file {config_path}: {e}")
             raise BadRequestError(f"Failed to write config file: {e}")
 
+    async def _read_config_file(self) -> Dict:
+        """
+        读取Tailscale配置文件
+        """
+        config_path = self.__config_path
+
+
+        default_config = {
+            "enable": False,
+            "exit_node": False,
+            "advertise_routes": "",
+            "accept_routes": False,
+            "accept_dns": False
+        }
+
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    config = json.load(f)
+
+                    default_config["enable"] = config.get("enable", False)
+                    default_config["exit_node"] = config.get("exit_node", False)
+                    default_config["advertise_routes"] = config.get("advertise_routes", "")
+                    default_config["accept_routes"] = config.get("accept_routes", False)
+                    default_config["accept_dns"] = config.get("accept_dns", False)
+            return default_config
+        except Exception as e:
+            self._logger.error(f"Failed to read config file {config_path}: {e}")
+            return default_config
+
+    async def _update_tailscale_config_file(self,
+                                          enable: Optional[bool] = None,
+                                          exit_node: Optional[bool] = None,
+                                          advertise_routes: Optional[str] = None,
+                                          accept_routes: Optional[bool] = None,
+                                          accept_dns: Optional[bool] = None) -> None:
+        """
+        更新Tailscale配置文件，保存各种配置参数
+
+        Args:
+            enable: True表示启用Tailscale，False表示禁用，None表示不更改
+            exit_node: 是否设置为exit node，None表示不更改
+            advertise_routes: 要广播的路由，None表示不更改
+            accept_routes: 是否接受路由，None表示不更改
+            accept_dns: 是否接受DNS，None表示不更改
+        """
+        config_path = self.__config_path
+        config_dir = os.path.dirname(config_path)
+
+
+        try:
+            os.makedirs(config_dir, exist_ok=True)
+        except Exception as e:
+            self._logger.error(f"Failed to create config directory {config_dir}: {e}")
+            raise BadRequestError(f"Failed to create config directory: {e}")
+
+
+        config = await self._read_config_file()
+
+
+        if enable is not None:
+            config["enable"] = enable
+        if exit_node is not None:
+            config["exit_node"] = exit_node
+        if advertise_routes is not None:
+            config["advertise_routes"] = advertise_routes
+        if accept_routes is not None:
+            config["accept_routes"] = accept_routes
+        if accept_dns is not None:
+            config["accept_dns"] = accept_dns
+
+
+        try:
+            with open(config_path, "w") as f:
+                json.dump(config, f, indent=4)
+            await asyncio.create_subprocess_shell("sync")
+
+            self._logger.info(f"Updated Tailscale config file: {config}")
+        except Exception as e:
+            self._logger.error(f"Failed to write config file {config_path}: {e}")
+            raise BadRequestError(f"Failed to write config file: {e}")
+
     @exposed_http("POST", "/tailscale/start")
     async def _start_handler(self, _: Request) -> Response:
         """
@@ -379,6 +461,11 @@ class TailscaleApi:
         使用tailscale status --json获取BackendState字段
         """
         try:
+
+            running = await self._check_tailscald_process()
+            if not running:
+                return make_json_exception(BadRequestError(), 502)
+
 
             status_data = await self._get_tailscale_status()
 
@@ -543,6 +630,7 @@ class TailscaleApi:
             cmd_parts = ["tailscale", "set"]
 
 
+            exit_node_bool = None
             if exit_node is not None:
 
                 exit_node_bool = exit_node.lower() in ("true", "1", "yes")
@@ -566,16 +654,18 @@ class TailscaleApi:
                     actual_routes = advertise_routes
                     cmd_parts.append(f"--advertise-routes={advertise_routes}")
                 else:
-                    actual_routes = None
+                    actual_routes = ""
                     cmd_parts.append(f"--advertise-routes=")
 
 
+            accept_routes_bool = None
             if accept_routes is not None:
 
                 accept_routes_bool = accept_routes.lower() in ("true", "1", "yes")
                 cmd_parts.append(f"--accept-routes={str(accept_routes_bool).lower()}")
 
 
+            accept_dns_bool = None
             if accept_dns is not None:
 
                 accept_dns_bool = accept_dns.lower() in ("true", "1", "yes")
@@ -595,7 +685,15 @@ class TailscaleApi:
             output = await self._run_command(cmd)
 
 
-            await asyncio.sleep(2)
+            await asyncio.sleep(1)
+
+
+            await self._update_tailscale_config_file(
+                exit_node=exit_node_bool,
+                advertise_routes=actual_routes,
+                accept_routes=accept_routes_bool,
+                accept_dns=accept_dns_bool
+            )
 
 
             status_data = await self._get_tailscale_status()
@@ -609,12 +707,13 @@ class TailscaleApi:
             }
 
 
-            response["applied_settings"]["advertise_routes"] = actual_routes
-            if exit_node is not None:
+            if actual_routes is not None:
+                response["applied_settings"]["advertise_routes"] = actual_routes
+            if exit_node_bool is not None:
                 response["applied_settings"]["exit_node"] = exit_node_bool
-            if accept_routes is not None:
+            if accept_routes_bool is not None:
                 response["applied_settings"]["accept_routes"] = accept_routes_bool
-            if accept_dns is not None:
+            if accept_dns_bool is not None:
                 response["applied_settings"]["accept_dns"] = accept_dns_bool
 
             return make_json_response(response)
@@ -628,4 +727,19 @@ class TailscaleApi:
             return make_json_exception(e, 400)
         except Exception as e:
             self._logger.error(f"Error configuring Tailscale parameters: {e}")
+            return make_json_exception(BadRequestError(), 502)
+
+    @exposed_http("GET", "/tailscale/config")
+    async def _get_config_handler(self, _: Request) -> Response:
+        """
+        获取Tailscale的配置信息
+        从配置文件中读取保存的配置参数
+        """
+        try:
+
+            config = await self._read_config_file()
+
+            return make_json_response(config)
+        except Exception as e:
+            self._logger.error(f"Error reading Tailscale config: {e}")
             return make_json_exception(BadRequestError(), 502)

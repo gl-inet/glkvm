@@ -20,18 +20,22 @@
 # ========================================================================== #
 
 
+import asyncio
 import operator
 import functools
 import multiprocessing.queues
 import queue
 import shlex
 
+from typing import Generator
 from typing import TypeVar
+from _queue import Empty
 
 
 # =====
 def remap(value: int, in_min: int, in_max: int, out_min: int, out_max: int) -> int:
-    return int((value - in_min) * (out_max - out_min) // (in_max - in_min) + out_min)
+    result = int((value - in_min) * (out_max - out_min) // ((in_max - in_min) or 1) + out_min)
+    return min(max(result, out_min), out_max)
 
 
 # =====
@@ -64,13 +68,12 @@ def swapped_kvs(dct: dict[_DictKeyT, _DictValueT]) -> dict[_DictValueT, _DictKey
 
 
 # =====
-def clear_queue(q: multiprocessing.queues.Queue) -> None:  # pylint: disable=invalid-name
-    while not q.empty():
+def clear_queue(q: (multiprocessing.queues.Queue | asyncio.Queue)) -> None:
+    while True:
         try:
             q.get_nowait()
-        except queue.Empty:
+        except (queue.Empty, asyncio.QueueEmpty):
             break
-
 
 # =====
 def build_cmd(cmd: list[str], cmd_remove: list[str], cmd_append: list[str]) -> list[str]:
@@ -80,3 +83,13 @@ def build_cmd(cmd: list[str], cmd_remove: list[str], cmd_append: list[str]) -> l
         *filter((lambda item: item not in cmd_remove), cmd[1:]),
         *cmd_append,
     ]
+
+
+
+def passwds_splitted(text: str) -> Generator[tuple[int, str], None, None]:
+    for (lineno, line) in enumerate(text.split("\n")):
+        line = line.rstrip("\r")
+        ls = line.strip()
+        if len(ls) == 0 or ls.startswith("
+            continue
+        yield (lineno, line)

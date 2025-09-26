@@ -20,6 +20,7 @@
 
 
 
+import os
 import asyncio
 import aiofiles
 import json
@@ -62,26 +63,57 @@ class WolApi:
 
     @exposed_http("GET", "/wol/scan")
     async def _arp_scan_handler(self, _: Request) -> Response:
+        """并行化ARP扫描处理器"""
         try:
-            output = await self._run_command("gl-arp-scan")
+            devices_dict = {}
+
+            interfaces = ["default"] + [
+                iface for iface in os.listdir('/sys/class/net')
+                if iface.startswith(('wlan0'))
+            ]
 
 
-            devices = []
-            for line in output.split("\n"):
-                if line.strip():
-                    ip, mac = line.strip().split()
+            scan_tasks = [
+                self._parallel_scan(iface, devices_dict)
+                for iface in interfaces
+            ]
 
-                    device_name = f"device-{mac.replace(':', '')[-4:]}"
-                    devices.append({
-                        "ip": ip,
-                        "mac": mac,
-                        "name": device_name
-                    })
 
-            return make_json_response({"devices": devices})
+            await asyncio.gather(*scan_tasks)
+
+            return make_json_response({"devices": list(devices_dict.values())})
+
         except Exception as e:
-            self._logger.error(f"Error during ARP scan: {e}")
-            return make_json_exception(BadRequestError(), 502)
+            self._logger.error(f"Error during ARP scan: {str(e)}", exc_info=True)
+            return make_json_exception(BadRequestError(), 500)
+
+    async def _parallel_scan(self, interface: str, devices: dict):
+        """并行扫描执行器"""
+        try:
+
+            cmd = ["gl-arp-scan"]
+            if interface != "default":
+                cmd += ["-i", interface]
+
+
+            output = await self._run_command(" ".join(cmd))
+            self._parse_arp_output(output, devices)
+
+        except Exception as e:
+            self._logger.error(f"Interface {interface} scan fail: {str(e)}")
+
+    def _parse_arp_output(self, output: str, devices: dict):
+        """通用解析方法"""
+        for line in output.split("\n"):
+            if line.strip():
+                ip, mac = line.strip().split()
+
+                device_name = f"device-{mac.replace(':', '')[-4:]}"
+                devices[mac] = {
+                    "ip": ip,
+                    "mac": mac,
+                    "name": device_name
+                }
 
     @exposed_http("GET", "/wol/list")
     async def _get_list_handler(self, _: Request) -> Response:
@@ -105,6 +137,9 @@ class WolApi:
             mac = request.query["mac"]
             cmd = f"ether-wake -i eth0 {mac}"
             await self._run_command(cmd)
+            if os.path.exists(f'/sys/class/net/wlan0'):
+                cmd = f"ether-wake -i wlan0 {mac}"
+                await self._run_command(cmd)
 
             return make_json_response({"result": f"WOL packet sent to {mac}"})
         except BadRequestError as e:

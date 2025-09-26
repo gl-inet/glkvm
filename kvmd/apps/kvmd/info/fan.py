@@ -21,7 +21,6 @@
 
 
 import copy
-import asyncio
 
 from typing import AsyncGenerator
 
@@ -53,6 +52,8 @@ class FanInfoSubmanager(BaseInfoSubmanager):
         self.__timeout = timeout
         self.__state_poll = state_poll
 
+        self.__notifier = aiotools.AioNotifier()
+
     async def get_state(self) -> dict:
         monitored = await self.__get_monitored()
         return {
@@ -60,24 +61,28 @@ class FanInfoSubmanager(BaseInfoSubmanager):
             "state": ((await self.__get_fan_state() if monitored else None)),
         }
 
-    async def poll_state(self) -> AsyncGenerator[dict, None]:
-        prev_state: dict = {}
+    async def trigger_state(self) -> None:
+        self.__notifier.notify(1)
+
+    async def poll_state(self) -> AsyncGenerator[(dict | None), None]:
+        prev: dict = {}
         while True:
             if self.__unix_path:
-                pure = state = await self.get_state()
+                if (await self.__notifier.wait(timeout=self.__state_poll)) > 0:
+                    prev = {}
+                new = await self.get_state()
+                pure = copy.deepcopy(new)
                 if pure["state"] is not None:
                     try:
-                        pure = copy.deepcopy(state)
                         pure["state"]["service"]["now_ts"] = 0
                     except Exception:
                         pass
-                if pure != prev_state:
-                    yield state
-                    prev_state = pure
-                await asyncio.sleep(self.__state_poll)
+                if pure != prev:
+                    prev = pure
+                    yield new
             else:
+                await self.__notifier.wait()
                 yield (await self.get_state())
-                await aiotools.wait_infinite()
 
     # =====
 
@@ -94,9 +99,9 @@ class FanInfoSubmanager(BaseInfoSubmanager):
     async def __get_fan_state(self) -> (dict | None):
         try:
             async with self.__make_http_session() as session:
-                async with session.get("http://localhost/state") as response:
-                    htclient.raise_not_200(response)
-                    return (await response.json())["result"]
+                async with session.get("http://localhost/state") as resp:
+                    htclient.raise_not_200(resp)
+                    return (await resp.json())["result"]
         except Exception as ex:
             get_logger(0).error("Can't read fan state: %s", ex)
             return None
