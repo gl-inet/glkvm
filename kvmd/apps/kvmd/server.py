@@ -21,6 +21,7 @@
 
 
 import dataclasses
+import os
 
 from typing import Callable
 from typing import Coroutine
@@ -157,6 +158,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     __EV_SWITCH_STATE = "switch"
     __EV_RNDIS_STATE = "rndis"
     __EV_FINGERBOT_STATE = "fingerbot"
+    __EV_REPEATER_STATE = "repeater"
     __EV_TURN_STATE = "turn"
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-locals
@@ -235,6 +237,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
 
             _Subsystem.make(rndis,        "RNDIS",        self.__EV_RNDIS_STATE),
             _Subsystem.make(self.__fingerbot_api, "Fingerbot", self.__EV_FINGERBOT_STATE),
+            _Subsystem.make(self.__repeater_api, "Repeater", self.__EV_REPEATER_STATE),
             _Subsystem.make(self.__turn_api, "turn", self.__EV_TURN_STATE),
         ]
 
@@ -371,13 +374,50 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                 await self.__streamer.ensure_stop(immediately=False)
 
             if self.__reset_streamer or self.__new_streamer_params:
-                start = self.__streamer.is_working()
-                await self.__streamer.ensure_stop(immediately=True)
-                if self.__new_streamer_params:
-                    self.__streamer.set_params(self.__new_streamer_params)
-                    self.__new_streamer_params = {}
-                if start:
-                    await self.__streamer.ensure_start(reset=self.__reset_streamer)
+
+                has_bitrate_change = "h264_bitrate" in self.__new_streamer_params
+                only_bitrate_change = (
+                    len(self.__new_streamer_params) == 1 and
+                    "h264_bitrate" in self.__new_streamer_params and
+                    not self.__reset_streamer
+                )
+
+
+                if has_bitrate_change:
+                    bitrate_value = self.__new_streamer_params["h264_bitrate"]
+                    try:
+                        with open("/tmp/bitrate", "w") as f:
+                            f.write(str(bitrate_value*1000))
+                        get_logger(0).info("Updated H264 bitrate to %d", bitrate_value)
+                    except Exception as e:
+                        get_logger(0).error("Failed to write bitrate to /tmp/bitrate: %s", e)
+
+                if only_bitrate_change:
+
+                    try:
+
+                        self.__streamer.set_params(self.__new_streamer_params)
+                        self.__new_streamer_params = {}
+                        get_logger(0).info("Updated H264 bitrate without restarting streamer")
+                    except Exception as e:
+                        get_logger(0).error("Failed to update streamer params: %s", e)
+
+                        start = self.__streamer.is_working()
+                        await self.__streamer.ensure_stop(immediately=True)
+                        self.__streamer.set_params(self.__new_streamer_params)
+                        self.__new_streamer_params = {}
+                        if start:
+                            await self.__streamer.ensure_start(reset=self.__reset_streamer)
+                else:
+
+                    start = self.__streamer.is_working()
+                    await self.__streamer.ensure_stop(immediately=True)
+                    if self.__new_streamer_params:
+                        self.__streamer.set_params(self.__new_streamer_params)
+                        self.__new_streamer_params = {}
+                    if start:
+                        await self.__streamer.ensure_start(reset=self.__reset_streamer)
+
                 self.__reset_streamer = False
 
             prev = cur

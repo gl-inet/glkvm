@@ -43,7 +43,9 @@ ASTROWARP_STATUS_PATH = "/var/run/cloud/bindinfo"
 ASTROWARP_INIT_PATH = "/etc/init.d/S99gl-cloud"
 ASTROWARP_CONFIG_PATH = "/etc/glinet/gl-cloud.conf"
 CLOUD_BIND_LINK_PATH = "/var/run/cloud/bindlink"
-
+RTTY_INIT_PATH = "/etc/init.d/S99rtty"
+CLOUD_DYNAMIC_CODE_PATH = "/var/run/cloud/dynamic_code"
+CLOUD_DYNAMIC_CODE_ERR_PATH = "/var/run/cloud/dynamic_code_err"
 
 
 class AstrowarpApi:
@@ -109,6 +111,7 @@ class AstrowarpApi:
             os.system(f"{ASTROWARP_INIT_PATH} restart")
         else:
             os.system(f"{ASTROWARP_INIT_PATH} stop")
+            os.system(f"{RTTY_INIT_PATH} stop")
         return make_json_response()
 
     async def _run_command(self, cmd: str) -> str:
@@ -140,11 +143,32 @@ class AstrowarpApi:
     @exposed_http("GET", "/astrowarp/get_bind_link")
     async def __get_bind_link(self, req: Request) -> Response:
         try:
-            await self._run_command("/usr/bin/eco /usr/bin/get_bindlink")
+            await self._run_command("/usr/bin/eco /usr/bin/get_bindlink bindlink")
             with open(CLOUD_BIND_LINK_PATH, "r") as file:
                 link_info = file.read()
                 link_info_json = json.loads(link_info)
                 return make_json_response(link_info_json)
+        except Exception as e:
+            self._logger.error(e)
+            return make_json_exception(NotFoundError(), 404)
+
+    @exposed_http("GET", "/astrowarp/get_dynamic_code")
+    async def __get_dynamic_code(self, req: Request) -> Response:
+        try:
+            await self._run_command("/usr/bin/eco /usr/bin/get_bindlink dynamic_code")
+
+            if os.path.exists(CLOUD_DYNAMIC_CODE_PATH):
+                with open(CLOUD_DYNAMIC_CODE_PATH, "r") as file:
+                    dynamic_code_info = file.read()
+                    dynamic_code_info_json = json.loads(dynamic_code_info)
+                    return make_json_response(dynamic_code_info_json)
+            elif os.path.exists(CLOUD_DYNAMIC_CODE_ERR_PATH):
+                with open(CLOUD_DYNAMIC_CODE_PATH, "r") as file:
+                    dynamic_code_info = file.read()
+                    dynamic_code_info_json = json.loads(dynamic_code_info)
+                    return make_json_response(dynamic_code_info_json)
+            else:
+                return make_json_exception(NotFoundError(), 404)
         except Exception as e:
             self._logger.error(e)
             return make_json_exception(NotFoundError(), 404)

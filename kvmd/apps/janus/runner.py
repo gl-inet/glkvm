@@ -31,9 +31,7 @@ class _Netcfg:
     def is_network_changed(prev: '_Netcfg | None', current: '_Netcfg') -> bool:
         if prev is None:
             return True
-        return (prev.src_ip != current.src_ip
-                or prev.ext_ip != current.ext_ip
-                or prev.nat_type != current.nat_type)
+        return (prev.ext_ip != current.ext_ip)
 
 
 # =====

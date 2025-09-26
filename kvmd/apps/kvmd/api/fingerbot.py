@@ -123,7 +123,7 @@ class FingerbotApi:
                     await sleep(1)
                     await self._read_version()
                     await self._read_battery()
-            await sleep(1)
+            await sleep(2)
 
     async def trigger_state(self) -> None:
         self.__need_update = True
@@ -248,8 +248,8 @@ class FingerbotApi:
             stdout, stderr = await process.communicate()
 
             if process.returncode != 0:
-                self._logger.error(f"Fingerbot command failed: {stderr.decode()}")
-                return make_json_exception(BadRequestError(f"Failed to click:{e}"), 502)
+                self._logger.error(f"Fingerbot failed to click: {stderr.decode()}")
+                return make_json_exception(BadRequestError(f"Failed to click"), 502)
 
 
             await self._read_battery()
@@ -281,8 +281,8 @@ class FingerbotApi:
             stdout, stderr = await process.communicate()
 
             if process.returncode != 0:
-                self._logger.error(f"Fingerbot command failed: {stderr.decode()}")
-                return make_json_exception(BadRequestError(f"Failed to push:{e}"), 502)
+                self._logger.error(f"Fingerbot failed to push: {stderr.decode()}")
+                return make_json_exception(BadRequestError(f"Failed to push"), 502)
 
 
             await self._read_battery()
@@ -315,8 +315,8 @@ class FingerbotApi:
             stdout, stderr = await process.communicate()
 
             if process.returncode != 0:
-                self._logger.error(f"Fingerbot command failed: {stderr.decode()}")
-                return make_json_exception(BadRequestError(f"Failed to pull:{e}"), 502)
+                self._logger.error(f"Fingerbot failed to pull: {stderr.decode()}")
+                return make_json_exception(BadRequestError(f"Failed to pull"), 502)
 
 
             await self._read_battery()

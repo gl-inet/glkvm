@@ -379,11 +379,12 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             size_kb: 分区大小(KB)
 
         Returns:
-            包含分区信息的字典,包括size、uuid和filesystem
+            包含分区信息的字典,包括size、uuid、filesystem和label
         """
 
         uuid = ""
         filesystem = ""
+        label = ""
         try:
             process = await create_subprocess_exec(
                 "blkid",
@@ -398,13 +399,16 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 uuid = output.split("UUID=")[1].split()[0].strip('"')
             if "TYPE=" in output:
                 filesystem = output.split("TYPE=")[1].split()[0].strip('"')
+            if "LABEL=" in output:
+                label = output.split("LABEL=")[1].split()[0].strip('"')
         except Exception as e:
-            get_logger(0).error(f"Failed to get UUID and filesystem type for {dev_path}: {e}")
+            get_logger(0).error(f"Failed to get UUID, filesystem type and label for {dev_path}: {e}")
 
         return {
             "size": size_kb * 1024,
             "uuid": uuid,
-            "filesystem": filesystem
+            "filesystem": filesystem,
+            "label": label
         }
 
 

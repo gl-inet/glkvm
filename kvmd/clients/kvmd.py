@@ -56,14 +56,10 @@ class _BaseApiPart:
 
 
 class _AuthApiPart(_BaseApiPart):
-    async def check(self, user: str, passwd: str) -> bool:
+    async def check(self) -> bool:
         session = self._ensure_http_session()
         try:
-            async with session.get("/auth/check", headers={
-                "X-KVMD-User":   user,
-                "X-KVMD-Passwd": passwd,
-            }) as resp:
-
+            async with session.get("/auth/check") as resp:
                 htclient.raise_not_200(resp)
                 return (resp.status == 200)
 
@@ -230,5 +226,9 @@ class KvmdClientSession(BaseHttpClientSession):
 
 
 class KvmdClient(BaseHttpClient):
-    def make_session(self) -> KvmdClientSession:
-        return KvmdClientSession(self._make_http_session)
+    def make_session(self, user: str="", passwd: str="") -> KvmdClientSession:
+        headers = {
+            "X-KVMD-User": user,
+            "X-KVMD-Passwd": passwd,
+        }
+        return KvmdClientSession(lambda: self._make_http_session(headers))

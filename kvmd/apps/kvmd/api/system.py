@@ -64,40 +64,6 @@ class SystemApi:
         }
 
 
-        self._timezone_map = {
-
-            "Pacific/Kiritimati": -840,
-            "Pacific/Tongatapu": -780,
-            "Pacific/Auckland": -720,
-            "Pacific/Noumea": -660,
-            "Australia/Sydney": -600,
-            "Asia/Tokyo": -540,
-            "Asia/Shanghai": -480,
-            "Asia/Bangkok": -420,
-            "Asia/Dhaka": -360,
-            "Asia/Karachi": -300,
-            "Asia/Dubai": -240,
-            "Europe/Moscow": -180,
-            "Europe/Berlin": -120,
-            "Europe/Paris": -60,
-            "UTC": 0,
-            "Atlantic/Azores": 60,
-            "Atlantic/South_Georgia": 120,
-            "America/Sao_Paulo": 180,
-            "America/New_York": 240,
-            "America/Chicago": 300,
-            "America/Denver": 360,
-            "America/Los_Angeles": 420,
-            "America/Anchorage": 480,
-            "America/Adak": 540,
-            "Pacific/Honolulu": 600,
-            "Pacific/Midway": 660,
-            "Pacific/Kwajalein": 720,
-        }
-
-
-        self._offset_to_timezone_map = {v: k for k, v in self._timezone_map.items()}
-
     def _validate_hex_to_int(self, value: str, param_name: str) -> int:
         """验证并转换16进制字符串为整数"""
         try:
@@ -181,15 +147,21 @@ class SystemApi:
                         config["mac_address"] = address_match.group(1)
 
 
+                elif line.startswith('IPv4.Configuration = '):
+                    ipv4_config_info = line.split('=', 1)[1].strip()
+
+                    ipv4_config_info = ipv4_config_info.strip('[ ]')
+
+                    if 'Method=dhcp' in ipv4_config_info:
+                        config["is_dhcp"] = True
+                    elif 'Method=manual' in ipv4_config_info:
+                        config["is_dhcp"] = False
+
+
                 elif line.startswith('IPv4 = '):
                     ipv4_info = line.split('=', 1)[1].strip()
 
                     ipv4_info = ipv4_info.strip('[ ]')
-
-                    if 'Method=dhcp' in ipv4_info:
-                        config["is_dhcp"] = True
-                    elif 'Method=manual' in ipv4_info:
-                        config["is_dhcp"] = False
 
 
                     ip_match = re.search(r'Address=([0-9.]+)', ipv4_info)
@@ -646,19 +618,33 @@ class SystemApi:
             self._logger.error(f"Cannot write network config file {self._network_config_path}: {e}")
             raise BadRequestError(f"Cannot write network config file: {e}")
 
-    def _get_timezone_offset_minutes(self, timezone_name: str) -> int:
-        """获取时区相对于UTC的分钟偏移量"""
-        try:
-            return self._timezone_map.get(timezone_name, 0)
-        except Exception:
+    def _get_gmt_zone_from_offset(self, offset_minutes: int) -> str:
+        """根据UTC偏移分钟获取对应的GMT时区路径"""
+        offset_hours = offset_minutes // 60
+        if offset_hours > 0:
+            return f"Etc/GMT+{offset_hours}"
+        elif offset_hours < 0:
+            return f"Etc/GMT-{abs(offset_hours)}"
+        else:
+            return "Etc/GMT"
+
+    def _get_offset_from_gmt_zone(self, gmt_zone: str) -> int:
+        """根据GMT时区路径获取UTC偏移分钟"""
+        import re
+        if gmt_zone == "Etc/GMT":
             return 0
 
-    def _offset_minutes_to_timezone(self, offset_minutes: int) -> str:
-        """将分钟偏移量转换为最接近的时区名称"""
-        try:
-            return self._offset_to_timezone_map.get(offset_minutes, "UTC")
-        except Exception:
-            return "UTC"
+
+        match = re.match(r'.*GMT([+-])(\d+)', gmt_zone)
+        if match:
+            sign, hours_str = match.groups()
+            hours = int(hours_str)
+
+            if sign == '+':
+                return hours * 60
+            else:
+                return -hours * 60
+        return 0
 
     @exposed_http("GET", "/system/time")
     async def get_time_handler(self, request: Request) -> Response:
@@ -668,29 +654,30 @@ class SystemApi:
             current_timestamp = int(datetime.now().timestamp())
 
 
-            timezone_name = "UTC"
+            gmt_zone = "Etc/GMT"
             try:
                 if os.path.exists("/etc/localtime"):
                     try:
                         link_target = os.readlink("/etc/localtime")
                         if "/zoneinfo/" in link_target:
-                            timezone_name = link_target.split("/zoneinfo/")[-1]
+                            zone_path = link_target.split("/zoneinfo/")[-1]
+
+                            if zone_path.startswith("Etc/GMT") or zone_path.startswith("posix/Etc/GMT"):
+                                gmt_zone = zone_path.replace("posix/", "")
+                            else:
+
+                                gmt_zone = "Etc/GMT"
                         else:
-                            timezone_name = "UTC"
+                            gmt_zone = "Etc/GMT"
                     except OSError:
-                        timezone_name = "UTC"
+                        gmt_zone = "Etc/GMT"
 
             except Exception as e:
                 self._logger.warning(f"Failed to get timezone: {e}")
-                timezone_name = "UTC"
+                gmt_zone = "Etc/GMT"
 
 
-            if timezone_name not in self._timezone_map:
-
-                timezone_name = "UTC"
-
-
-            timezone_offset = self._get_timezone_offset_minutes(timezone_name)
+            timezone_offset = self._get_offset_from_gmt_zone(gmt_zone)
 
             return make_json_response({
                 "success": True,
@@ -728,25 +715,30 @@ class SystemApi:
                         raise BadRequestError("time_zone parameter out of valid range (-840 to 840 minutes)")
 
 
-                    timezone_name = self._offset_minutes_to_timezone(timezone_offset)
+                    gmt_zone = self._get_gmt_zone_from_offset(timezone_offset)
 
 
-                    zoneinfo_path = f"/usr/share/zoneinfo/{timezone_name}"
-                    if os.path.exists(zoneinfo_path):
+                    posix_zoneinfo_path = f"/usr/share/zoneinfo/posix/{gmt_zone}"
+                    zoneinfo_path = f"/usr/share/zoneinfo/{gmt_zone}"
+
+
+                    target_path = posix_zoneinfo_path if os.path.exists(posix_zoneinfo_path) else zoneinfo_path
+
+                    if os.path.exists(target_path):
                         try:
 
                             if os.path.exists("/etc/localtime"):
                                 os.remove("/etc/localtime")
 
-                            os.symlink(zoneinfo_path, "/etc/localtime")
+                            os.symlink(target_path, "/etc/localtime")
                             await aiotools.run_async(os.sync)
-                            self._logger.info(f"Created /etc/localtime symlink to: {zoneinfo_path}")
+                            self._logger.info(f"Created /etc/localtime symlink to: {target_path}")
                         except Exception as e:
                             self._logger.warning(f"Failed to create /etc/localtime symlink: {e}")
                     else:
-                        self._logger.warning(f"Timezone file not found: {zoneinfo_path}")
+                        self._logger.warning(f"GMT timezone file not found: {target_path}")
 
-                    self._logger.info(f"Successfully set timezone to: {timezone_name} (offset: {timezone_offset} minutes)")
+                    self._logger.info(f"Successfully set timezone to: {gmt_zone} (offset: {timezone_offset} minutes)")
 
                 except ValueError as e:
                     raise BadRequestError(f"Invalid time_zone parameter: {str(e)}")

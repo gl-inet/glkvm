@@ -383,6 +383,19 @@ def _get_config_scheme() -> dict:
     except:
         country_code = ""
 
+
+    try:
+        with open("/proc/gl-hw-info/model", "r") as f:
+            model = f.read().strip()
+    except:
+        model = ""
+
+
+    if model == "rm1":
+        default_product_id = 0x0104
+    else:
+        default_product_id = 0x0105
+
     return {
         "logging": Option({}),
 
@@ -502,7 +515,7 @@ def _get_config_scheme() -> dict:
                     "max":     Option(240, type=valid_stream_h264_gop, unpack_as="h264_gop_max"),
                 },
 
-                "zero_delay": Option(True, type=valid_stream_zero_delay),
+                "zero_delay": Option(False if model == "rm10" else True, type=valid_stream_zero_delay),
 
                 "unix":    Option("/run/kvmd/ustreamer.sock", type=valid_abs_path, unpack_as="unix_path"),
                 "timeout": Option(2.0, type=valid_float_f01),
@@ -606,7 +619,7 @@ def _get_config_scheme() -> dict:
 
         "otg": {
             "vendor_id":      Option(0x1D6B, type=valid_otg_id),  # Linux Foundation
-            "product_id":     Option(0x0104, type=valid_otg_id),  # Multifunction Composite Gadget
+            "product_id":     Option(default_product_id, type=valid_otg_id),
             "manufacturer":   Option("Glinet", type=valid_stripped_string),
             "product":        Option("Glinet Composite Device", type=valid_stripped_string),
             "serial":         Option("CAFEBABE", type=valid_stripped_string, if_none=None),

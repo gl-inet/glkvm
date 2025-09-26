@@ -314,7 +314,8 @@ class UpgradeApi:
                 "cat /proc/gl-hw-info/device_mac": f"{LOG_DIR}/device_mac_{timestamp}.log",
                 "cat /etc/glinet/gl-cloud.conf": f"{LOG_DIR}/gl-cloud.conf_{timestamp}.log",
                 "ifconfig": f"{LOG_DIR}/ifconfig_{timestamp}.log",
-                "wg": f"{LOG_DIR}/wg_{timestamp}.log"
+                "wg": f"{LOG_DIR}/wg_{timestamp}.log",
+                "[ -f /userdata/gl_kvm_monitor.log ] && cat /userdata/gl_kvm_monitor.log": f"{LOG_DIR}/monitor_{timestamp}.log"
             }
 
 

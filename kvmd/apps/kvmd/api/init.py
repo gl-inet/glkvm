@@ -74,19 +74,6 @@ class InitApi:
                 "country_code": country_code
             })
 
-    @exposed_http("GET", "/init/get_language",auth_required=False)
-    async def __get_language_handler(self, req: Request) -> Response:
-        country_code = self.__init_manager.get_country_code()
-        return make_json_response({
-            "country_code": country_code
-        })
-
-    @exposed_http("POST", "/init/set_language")
-    async def __set_language_handler(self, req: Request) -> Response:
-        country_code = req.query.get("country_code")
-        self.__init_manager.set_country_code(country_code)
-        return make_json_response()
-
     @exposed_http("POST", "/init/change_password")
     async def __change_password_handler(self, req: Request) -> Response:
 

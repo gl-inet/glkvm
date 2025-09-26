@@ -339,14 +339,14 @@ class _Client(RfbClient):  # pylint: disable=too-many-instance-attributes
     # =====
 
     async def _authorize_userpass(self, user: str, passwd: str) -> bool:
-        self.__kvmd_session = self.__kvmd.make_session()
-        if (await self.__kvmd_session.auth.check(user, passwd)):
+        self.__kvmd_session = self.__kvmd.make_session(user, passwd)
+        if (await self.__kvmd_session.auth.check()):
             self.__stage1_authorized.set_passed()
             return True
         return False
 
     async def _on_authorized_vncpass(self) -> None:
-        self.__kvmd_session = self.__kvmd.make_session()
+        self.__kvmd_session = self.__kvmd.make_session("", "")
         self.__stage1_authorized.set_passed()
 
     async def _authorize_none(self) -> bool:
@@ -504,8 +504,8 @@ class VncServer:  # pylint: disable=too-many-instance-attributes
                     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, timeout)  # type: ignore
 
                 try:
-                    async with kvmd.make_session() as kvmd_session:
-                        none_auth_only = await kvmd_session.auth.check("", "")
+                    async with kvmd.make_session("", "") as kvmd_session:
+                        none_auth_only = await kvmd_session.auth.check()
                 except (aiohttp.ClientError, asyncio.TimeoutError) as ex:
                     logger.error("%s [entry]: Can't check KVMD auth mode: %s", remote, tools.efmt(ex))
                     return

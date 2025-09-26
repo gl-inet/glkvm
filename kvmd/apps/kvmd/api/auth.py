@@ -84,6 +84,19 @@ async def _check_basic(auth_manager: AuthManager, _: HttpExposed, req: Request) 
     return False
 
 
+async def _check_header_token(auth_manager: AuthManager, _: HttpExposed, req: Request) -> bool:
+    token = req.headers.get("Token", "")
+
+    if token:
+        user = auth_manager.check(valid_auth_token(token))
+        if user:
+            set_request_auth_info(req, f"{user} (header-token)")
+            return True
+        set_request_auth_info(req, "- (header-token)")
+        raise ForbiddenError()
+    return False
+
+
 async def _check_usc(auth_manager: AuthManager, exposed: HttpExposed, req: Request) -> bool:
     if exposed.allow_usc:
         creds = get_request_unix_credentials(req)
@@ -99,7 +112,7 @@ async def _check_usc(auth_manager: AuthManager, exposed: HttpExposed, req: Reque
 async def check_request_auth(auth_manager: AuthManager, exposed: HttpExposed, req: Request) -> None:
     if not auth_manager.is_auth_required(exposed):
         return
-    for checker in [_check_xhdr, _check_token, _check_basic, _check_usc]:
+    for checker in [_check_xhdr, _check_header_token, _check_token, _check_basic, _check_usc]:
         if (await checker(auth_manager, exposed, req)):
             return
     raise UnauthorizedError()
@@ -121,7 +134,7 @@ class AuthApi:
                 expire=valid_expire(credentials.get("expire", "0")),
             )
             if token:
-                return make_json_response(set_cookies={_COOKIE_AUTH_TOKEN: token})
+                return make_json_response({"token": token}, set_cookies={_COOKIE_AUTH_TOKEN: token})
             raise ForbiddenError()
         return make_json_response()
 

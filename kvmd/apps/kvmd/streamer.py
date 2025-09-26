@@ -277,7 +277,7 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
     # =====
 
     def set_params(self, params: dict) -> None:
-        assert not self.__streamer_task
+
         self.__notifier.notify(self.__ST_PARAMS)
         return self.__params.set_params(params)
 
@@ -464,5 +464,5 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
 
     async def __kill_streamer_proc(self) -> None:
         if self.__streamer_proc:
-            await aioproc.kill_process(self.__streamer_proc, 1, get_logger(0))
+            await aioproc.kill_process(self.__streamer_proc, 3, get_logger(0))
         self.__streamer_proc = None

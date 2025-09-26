@@ -48,17 +48,21 @@ class InitManager:
                 with open(self.state_file, "r") as f:
                     state = json.load(f)
                     self.inited = state.get("inited", False)
-                    self.country_code = state.get("country_code", "")
             else:
+                self.inited = False
+
+
+            try:
                 with open(self.country_code_file, 'r') as f:
                     self.country_code = f.read().strip()
-                self.inited = False
+            except Exception:
+                self.country_code = ""
         except Exception as e:
             get_logger().error(f"Failed to load init state: {e}")
 
     def _save_state(self) -> None:
         try:
-            state = {"inited": self.inited,"country_code": self.country_code}
+            state = {"inited": self.inited}
             os.makedirs(os.path.dirname(self.state_file), exist_ok=True)
             with open(self.state_file, "w") as f:
                 json.dump(state, f)
@@ -72,10 +76,6 @@ class InitManager:
 
     def get_country_code(self) -> str:
         return self.country_code
-
-    def set_country_code(self, country_code: str) -> None:
-        self.country_code = country_code
-        self._save_state()
 
     def _change_root_password(self, password: str) -> None:
         """修改root用户的SSH密码"""
@@ -127,13 +127,6 @@ class InitManager:
             except Exception:
 
                 pass
-
-
-            try:
-                with open(self.country_code_file, 'r') as f:
-                    self.country_code = f.read().strip()
-            except:
-                self.country_code = ""
 
             self.inited = True
             self._save_state()

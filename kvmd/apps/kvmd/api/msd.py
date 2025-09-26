@@ -95,7 +95,8 @@ class MsdApi:
                     "path": f"/dev/disk/by-uuid/{info.get('uuid', '')}",
                     "size": info.get("size", 0) if isinstance(info, dict) else info,
                     "uuid": info.get("uuid", "") if isinstance(info, dict) else "",
-                    "filesystem": info.get("filesystem", "") if isinstance(info, dict) else ""
+                    "filesystem": info.get("filesystem", "") if isinstance(info, dict) else "",
+                    "label": info.get("label", "") if isinstance(info, dict) else ""
                 }
                 for path, info in devices.items()
             }
