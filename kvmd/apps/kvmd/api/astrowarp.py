@@ -73,8 +73,6 @@ class AstrowarpApi:
 
                 if "bindtime" not in status or status["bindtime"] == "":
                     raise Exception("bindtime not found")
-                if "email" not in status or status["email"] == "":
-                    raise Exception("email not found")
                 if "username" not in status or "username" == "":
                     raise Exception("username not found")
             return make_json_response({"result": "success","status": status,"enabled": enabled})

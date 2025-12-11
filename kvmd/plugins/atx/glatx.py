@@ -28,7 +28,7 @@ class Plugin(BaseAtx):
                 return {
                     "enabled": False,
                     "busy": self.__region.is_busy(),
-                    "power": False,
+                    "power": "off",
                     "leds": {
                         "power": False,
                         "hdd": False,
@@ -50,12 +50,11 @@ class Plugin(BaseAtx):
                     raise AtxError(f"Failed to get power state: {error}")
 
                 power_state = result.stdout.strip()
-                power_state_bool = (power_state == "on" or power_state == "sleep")
 
                 return {
                     "enabled": True,
                     "busy": self.__region.is_busy(),
-                    "power": power_state_bool,
+                    "power": power_state,
                     "leds": {
                         "power": False,
                         "hdd": False,
@@ -70,7 +69,7 @@ class Plugin(BaseAtx):
             return {
                 "enabled": False,
                 "busy": self.__region.is_busy(),
-                "power": False,
+                "power": "off",
                 "leds": {
                     "power": False,
                     "hdd": False,

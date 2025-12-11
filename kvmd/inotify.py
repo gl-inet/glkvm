@@ -214,6 +214,9 @@ class Inotify:
             self.__wd_by_path[path] = wd
             self.__path_by_wd[wd] = path
 
+    async def watch_create_and_delete(self, *paths: str) -> None:
+        await self.watch(InotifyMask.CREATE | InotifyMask.DELETE, *paths)
+
 #    def unwatch(self, path: str) -> None:
 #        path = os.path.normpath(path)
 #        assert path in self.__wd_by_path, path

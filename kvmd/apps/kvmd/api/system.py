@@ -55,6 +55,10 @@ class SystemApi:
         self._config_path = "/etc/kvmd/user/boot.yaml"
         self._user_config_path = "/etc/kvmd/user/config.json"
         self._network_config_path = "/etc/kvmd/user/network.json"
+        self._ssl_dir = "/etc/kvmd/user/ssl"
+        self._ssl_cert_path = "/etc/kvmd/user/ssl/server.crt"
+        self._ssl_key_path = "/etc/kvmd/user/ssl/server.key"
+        self._usb_pid_path = "/proc/gl-hw-info/usb_pid"
 
 
         self._param_validators = {
@@ -78,23 +82,39 @@ class SystemApi:
         """将整数转换为0x前缀的16进制字符串"""
         return f"0x{value:04X}"
 
+    def _read_usb_pid(self) -> int:
+        """从 /proc/gl-hw-info/usb_pid 读取 USB Product ID"""
+        try:
+            if os.path.exists(self._usb_pid_path):
+                with open(self._usb_pid_path, "r") as f:
+                    pid_str = f.read().strip()
+
+                    return int(pid_str)
+        except Exception as e:
+            self._logger.warning(f"Failed to read USB PID from {self._usb_pid_path}: {e}")
+
+        return 260
+
     async def _get_ethernet_service_id(self) -> Optional[str]:
         """获取以太网服务ID"""
         try:
 
-            result = subprocess.run(
-                ["connmanctl", "services"],
-                capture_output=True,
-                text=True,
-                timeout=10
+            process = await asyncio.create_subprocess_exec(
+                "connmanctl", "services",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            if result.returncode != 0:
-                self._logger.error(f"connmanctl services command failed: {result.stderr}")
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+            if process.returncode != 0:
+                stderr_text = stderr.decode() if stderr else ""
+                self._logger.error(f"connmanctl services command failed: {stderr_text}")
                 return None
 
 
-            for line in result.stdout.split('\n'):
+            stdout_text = stdout.decode() if stdout else ""
+            for line in stdout_text.split('\n'):
                 if 'ethernet' in line.lower():
 
                     parts = line.split()
@@ -103,7 +123,7 @@ class SystemApi:
 
             return None
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             self._logger.error("connmanctl services command timeout")
             return None
         except Exception as e:
@@ -125,6 +145,8 @@ class SystemApi:
 
         try:
             lines = output.split('\n')
+            ipv4_config_info = ""
+
             for line in lines:
                 line = line.strip()
 
@@ -187,6 +209,26 @@ class SystemApi:
                     ipv4_dns_match = re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b', nameservers_info)
                     config["dns_servers"] = ipv4_dns_match
 
+
+            if ipv4_config_info:
+
+                if not config["ip_address"]:
+                    ip_match = re.search(r'Address=([0-9.]+)', ipv4_config_info)
+                    if ip_match:
+                        config["ip_address"] = ip_match.group(1)
+
+
+                if not config["netmask"]:
+                    netmask_match = re.search(r'Netmask=([0-9.]+)', ipv4_config_info)
+                    if netmask_match:
+                        config["netmask"] = netmask_match.group(1)
+
+
+                if not config["gateway"]:
+                    gateway_match = re.search(r'Gateway=([0-9.]+)', ipv4_config_info)
+                    if gateway_match:
+                        config["gateway"] = gateway_match.group(1)
+
             return config
 
         except Exception as e:
@@ -203,26 +245,29 @@ class SystemApi:
                 raise BadRequestError("Ethernet service not found")
 
 
-            result = subprocess.run(
-                ["connmanctl", "services", service_id],
-                capture_output=True,
-                text=True,
-                timeout=10
+            process = await asyncio.create_subprocess_exec(
+                "connmanctl", "services", service_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            if result.returncode != 0:
-                self._logger.error(f"connmanctl services {service_id} command failed: {result.stderr}")
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+            if process.returncode != 0:
+                stderr_text = stderr.decode() if stderr else ""
+                self._logger.error(f"connmanctl services {service_id} command failed: {stderr_text}")
                 raise BadRequestError("connmanctl services command failed")
 
 
-            config = await self._parse_connman_output(result.stdout)
+            stdout_text = stdout.decode() if stdout else ""
+            config = await self._parse_connman_output(stdout_text)
 
             return make_json_response({
                 "success": True,
                 "config": config
             })
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return make_json_exception(BadRequestError("connmanctl services command timeout"), 502)
         except BadRequestError as e:
             return make_json_exception(e, 502)
@@ -268,43 +313,49 @@ class SystemApi:
 
             if mode == "dhcp":
 
-                result = subprocess.run(
-                    ["connmanctl", "config", service_id, "--ipv4", "dhcp"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
+                process = await asyncio.create_subprocess_exec(
+                    "connmanctl", "config", service_id, "--ipv4", "dhcp",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
 
-                if result.returncode != 0:
-                    self._logger.error(f"Failed to set DHCP mode: {result.stderr}")
-                    raise BadRequestError(f"Failed to set DHCP mode: {result.stderr}")
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    self._logger.error(f"Failed to set DHCP mode: {stderr_text}")
+                    raise BadRequestError(f"Failed to set DHCP mode: {stderr_text}")
 
 
-                result = subprocess.run(
-                    ["connmanctl", "config", service_id, "--nameservers", ""],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
+                process = await asyncio.create_subprocess_exec(
+                    "connmanctl", "config", service_id, "--nameservers", "",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
 
-                if result.returncode != 0:
-                    self._logger.error(f"Failed to set DHCP DNS: {result.stderr}")
-                    raise BadRequestError(f"Failed to set DHCP DNS: {result.stderr}")
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    self._logger.error(f"Failed to set DHCP DNS: {stderr_text}")
+                    raise BadRequestError(f"Failed to set DHCP DNS: {stderr_text}")
 
                 self._logger.info("Successfully switched to DHCP mode")
 
             else:
 
-                result = subprocess.run(
-                    ["connmanctl", "config", service_id, "--ipv4", "manual", ip_address, netmask, gateway],
-                    capture_output=True,
-                    text=True,
-                    timeout=30
+                process = await asyncio.create_subprocess_exec(
+                    "connmanctl", "config", service_id, "--ipv4", "manual", ip_address, netmask, gateway,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
                 )
 
-                if result.returncode != 0:
-                    self._logger.error(f"Failed to set static IP: {result.stderr}")
-                    raise BadRequestError(f"Failed to set static IP: {result.stderr}")
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    self._logger.error(f"Failed to set static IP: {stderr_text}")
+                    raise BadRequestError(f"Failed to set static IP: {stderr_text}")
 
                 self._logger.info(f"Successfully set static IP: {ip_address}/{netmask}, gateway: {gateway}")
 
@@ -321,31 +372,35 @@ class SystemApi:
 
 
                     dns_cmd = ["connmanctl", "config", service_id, "nameservers"] + dns_list
-                    result = subprocess.run(
-                        dns_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30
+                    process = await asyncio.create_subprocess_exec(
+                        *dns_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
                     )
 
-                    if result.returncode != 0:
-                        self._logger.error(f"Failed to set DNS servers: {result.stderr}")
-                        raise BadRequestError(f"Failed to set DNS servers: {result.stderr}")
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                    if process.returncode != 0:
+                        stderr_text = stderr.decode() if stderr else ""
+                        self._logger.error(f"Failed to set DNS servers: {stderr_text}")
+                        raise BadRequestError(f"Failed to set DNS servers: {stderr_text}")
 
                     self._logger.info(f"Successfully set DNS servers: {', '.join(dns_list)}")
                 else:
 
                     dns_cmd = ["connmanctl", "config", service_id, "nameservers"]
-                    result = subprocess.run(
-                        dns_cmd,
-                        capture_output=True,
-                        text=True,
-                        timeout=30
+                    process = await asyncio.create_subprocess_exec(
+                        *dns_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
                     )
 
-                    if result.returncode != 0:
-                        self._logger.error(f"Failed to set DHCP DNS: {result.stderr}")
-                        raise BadRequestError(f"Failed to set DHCP DNS: {result.stderr}")
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                    if process.returncode != 0:
+                        stderr_text = stderr.decode() if stderr else ""
+                        self._logger.error(f"Failed to set DHCP DNS: {stderr_text}")
+                        raise BadRequestError(f"Failed to set DHCP DNS: {stderr_text}")
 
                     self._logger.info("Successfully set to use DHCP DNS")
 
@@ -388,7 +443,7 @@ class SystemApi:
 
             })
 
-        except subprocess.TimeoutExpired:
+        except asyncio.TimeoutError:
             return make_json_exception(BadRequestError("connmanctl services command timeout"), 502)
         except BadRequestError as e:
             return make_json_exception(e, 400)
@@ -413,15 +468,17 @@ class SystemApi:
     async def _get_current_network_config(self, service_id: str) -> Dict[str, Any]:
         """获取当前网络配置（内部方法）"""
         try:
-            result = subprocess.run(
-                ["connmanctl", "services", service_id],
-                capture_output=True,
-                text=True,
-                timeout=10
+            process = await asyncio.create_subprocess_exec(
+                "connmanctl", "services", service_id,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
 
-            if result.returncode == 0:
-                return await self._parse_connman_output(result.stdout)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+            if process.returncode == 0:
+                stdout_text = stdout.decode() if stdout else ""
+                return await self._parse_connman_output(stdout_text)
             else:
                 return {}
         except Exception:
@@ -476,6 +533,9 @@ class SystemApi:
             data = await self._read_yaml()
 
 
+            usb_pid_from_proc = self._read_usb_pid()
+
+
             return make_json_response({
                 "success": True,
                 "absolute_mouse": self._get_nested_value(data, "kvmd/hid/mouse/absolute", True),
@@ -484,11 +544,13 @@ class SystemApi:
 
                 "otg_manufacturer": self._get_nested_value(data, "otg/manufacturer", "Glinet"),
                 "otg_product": self._get_nested_value(data, "otg/product", "Glinet Composite Device"),
-                "otg_vendor_id": self._int_to_hex_str(self._get_nested_value(data, "otg/vendor_id", 7531)),
-                "otg_product_id": self._int_to_hex_str(self._get_nested_value(data, "otg/product_id", 260)),
-                "otg_serial": self._get_nested_value(data, "otg/serial", "CAFEBABE"),
+                "otg_vendor_id": self._int_to_hex_str(self._get_nested_value(data, "otg/vendor_id", 14571)),
+                "otg_product_id": self._int_to_hex_str(self._get_nested_value(data, "otg/product_id", usb_pid_from_proc)),
+                "otg_serial": self._get_nested_value(data, "otg/serial", ""),
 
-                "enable_mic": self._get_nested_value(data, "otg/devices/audio/enabled", False)
+                "enable_mic": self._get_nested_value(data, "otg/devices/audio/enabled", False),
+                "default_product_id": self._int_to_hex_str(usb_pid_from_proc),
+                "default_vendor_id": self._int_to_hex_str(14571),
             })
 
         except BadRequestError as e:
@@ -556,6 +618,9 @@ class SystemApi:
             await self._write_yaml(data)
 
 
+            usb_pid_from_proc = self._read_usb_pid()
+
+
             return make_json_response({
                 "success": True,
                 "absolute_mouse": self._get_nested_value(data, "kvmd/hid/mouse/absolute", True),
@@ -563,9 +628,9 @@ class SystemApi:
                 "msd_type": self._get_nested_value(data, "kvmd/msd/type", "otg"),
                 "otg_manufacturer": self._get_nested_value(data, "otg/manufacturer", "Glinet"),
                 "otg_product": self._get_nested_value(data, "otg/product", "Glinet Composite Device"),
-                "otg_vendor_id": self._int_to_hex_str(self._get_nested_value(data, "otg/vendor_id", 7531)),
-                "otg_product_id": self._int_to_hex_str(self._get_nested_value(data, "otg/product_id", 260)),
-                "otg_serial": self._get_nested_value(data, "otg/serial", "CAFEBABE")
+                "otg_vendor_id": self._int_to_hex_str(self._get_nested_value(data, "otg/vendor_id", 14571)),
+                "otg_product_id": self._int_to_hex_str(self._get_nested_value(data, "otg/product_id", usb_pid_from_proc)),
+                "otg_serial": self._get_nested_value(data, "otg/serial", "")
             })
 
         except BadRequestError as e:
@@ -755,25 +820,28 @@ class SystemApi:
                         raise BadRequestError("time parameter out of valid range")
 
 
-                    result = subprocess.run(
-                        ["date", "-s", f"@{timestamp}"],
-                        capture_output=True,
-                        text=True,
-                        timeout=30
+                    process = await asyncio.create_subprocess_exec(
+                        "date", "-s", f"@{timestamp}",
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
                     )
 
-                    if result.returncode != 0:
-                        self._logger.error(f"Failed to set time with date -s @{timestamp}: {result.stderr}")
-                        raise BadRequestError(f"Failed to set time with date -s @{timestamp}: {result.stderr}")
+                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                    if process.returncode != 0:
+                        stderr_text = stderr.decode() if stderr else ""
+                        self._logger.error(f"Failed to set time with date -s @{timestamp}: {stderr_text}")
+                        raise BadRequestError(f"Failed to set time with date -s @{timestamp}: {stderr_text}")
 
 
                     try:
-                        subprocess.run(
-                            ["hwclock", "-w"],
-                            capture_output=True,
-                            text=True,
-                            timeout=10
+                        process = await asyncio.create_subprocess_exec(
+                            "hwclock", "-w",
+                            stdout=asyncio.subprocess.PIPE,
+                            stderr=asyncio.subprocess.PIPE
                         )
+
+                        await asyncio.wait_for(process.communicate(), timeout=10)
                         self._logger.info("Hardware clock synchronized")
                     except Exception as e:
                         self._logger.warning(f"Failed to sync hardware clock: {e}")
@@ -832,3 +900,482 @@ class SystemApi:
         except Exception as e:
             self._logger.error(f"Error setting user config: {e}")
             return make_json_exception(BadRequestError(), 502)
+
+    @exposed_http("GET", "/system/get_hostname")
+    async def get_hostname_handler(self, request: Request) -> Response:
+
+        try:
+            if os.path.exists("/etc/hostname"):
+                with open("/etc/hostname", "r") as f:
+                    hostname = f.read().strip()
+            else:
+
+                hostname = "glkvm"
+
+            return make_json_response({
+                "success": True,
+                "hostname": hostname
+            })
+
+        except Exception as e:
+            self._logger.error(f"Error getting hostname: {e}")
+            return make_json_exception(BadRequestError(f"Error getting hostname: {str(e)}"), 502)
+
+    @exposed_http("POST", "/system/set_hostname")
+    async def set_hostname_handler(self, request: Request) -> Response:
+
+        try:
+            hostname = request.query.get("hostname")
+
+            if not hostname:
+                raise BadRequestError("hostname parameter is required")
+
+
+            if not self._validate_hostname(hostname):
+                raise BadRequestError("Invalid hostname format. Hostname must contain only letters, numbers, and hyphens, and cannot start or end with a hyphen.")
+
+
+            try:
+                with open("/etc/hostname", "w") as f:
+                    f.write(hostname + "\n")
+                await asyncio.create_subprocess_shell("sync")
+                self._logger.info(f"Successfully set hostname to: {hostname}")
+            except Exception as e:
+                self._logger.error(f"Failed to write hostname to /etc/hostname: {e}")
+                raise BadRequestError(f"Failed to write hostname: {str(e)}")
+
+            await asyncio.create_subprocess_shell("hostname " + hostname)
+            await aiotools.run_async(os.sync)
+
+
+            try:
+                process = await asyncio.create_subprocess_exec(
+                    "/usr/bin/gl_mdns", "system", "restart",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    self._logger.warning(f"Failed to restart gl_mdns: {stderr_text}")
+
+                else:
+                    self._logger.info("Successfully restarted gl_mdns service")
+
+            except asyncio.TimeoutError:
+                self._logger.warning("gl_mdns restart timeout")
+            except Exception as e:
+                self._logger.warning(f"Error restarting gl_mdns: {e}")
+
+            return make_json_response({
+                "success": True,
+                "hostname": hostname
+            })
+
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error setting hostname: {e}")
+            return make_json_exception(BadRequestError(f"Error setting hostname: {str(e)}"), 502)
+
+    def _validate_hostname(self, hostname: str) -> bool:
+        import re
+
+        if not hostname:
+            return False
+
+
+        if len(hostname) > 63:
+            return False
+
+
+
+        pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$'
+
+        return bool(re.match(pattern, hostname))
+
+    @exposed_http("GET", "/system/ssh_key")
+    async def get_ssh_key_handler(self, request: Request) -> Response:
+        """获取SSH公钥"""
+        try:
+            ssh_key_path = "/root/.ssh/authorized_keys"
+
+            if os.path.exists(ssh_key_path):
+                with open(ssh_key_path, "r") as f:
+                    ssh_key = f.read()
+            else:
+                ssh_key = ""
+
+            return make_json_response({
+                "success": True,
+                "ssh_key": ssh_key
+            })
+
+        except Exception as e:
+            self._logger.error(f"Error getting SSH key: {e}")
+            return make_json_exception(BadRequestError(f"Error getting SSH key: {str(e)}"), 502)
+
+    @exposed_http("POST", "/system/ssh_key")
+    async def set_ssh_key_handler(self, request: Request) -> Response:
+        """设置SSH公钥"""
+        try:
+
+            ssh_key = await request.text()
+
+
+            ssh_dir = "/root/.ssh"
+            os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
+
+
+            ssh_key_path = os.path.join(ssh_dir, "authorized_keys")
+            with open(ssh_key_path, "w") as f:
+                f.write(ssh_key)
+
+
+            os.chmod(ssh_key_path, 0o600)
+
+
+            await asyncio.create_subprocess_shell("sync")
+
+            self._logger.info(f"Successfully updated SSH key at {ssh_key_path}")
+
+            return make_json_response({
+                "success": True
+            })
+
+        except Exception as e:
+            self._logger.error(f"Error setting SSH key: {e}")
+            return make_json_exception(BadRequestError(f"Error setting SSH key: {str(e)}"), 502)
+
+    async def _restart_nginx(self) -> None:
+        """重启 Nginx 服务"""
+        try:
+
+            await asyncio.sleep(0.5)
+
+            self._logger.info("Restarting Nginx service...")
+
+            process = await asyncio.create_subprocess_exec(
+                "/etc/init.d/S99kvmd-nginx", "restart",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            _, stderr = await asyncio.wait_for(process.communicate(), timeout=30)
+
+            if process.returncode != 0:
+                stderr_text = stderr.decode() if stderr else ""
+                self._logger.error(f"Failed to restart Nginx: {stderr_text}")
+            else:
+                self._logger.info("Successfully restarted Nginx service")
+
+        except asyncio.TimeoutError:
+            self._logger.error("Nginx restart timeout")
+        except Exception as e:
+            self._logger.error(f"Error restarting Nginx: {e}")
+
+    async def _validate_ssl_certificate(self, cert_data: str) -> tuple[bool, str]:
+        """验证 SSL 证书格式"""
+        try:
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as f:
+                f.write(cert_data)
+                temp_cert_path = f.name
+
+            try:
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "x509", "-in", temp_cert_path, "-noout", "-text",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    return False, f"Invalid certificate format: {stderr_text}"
+
+                return True, "Certificate is valid"
+
+            finally:
+
+                if os.path.exists(temp_cert_path):
+                    os.remove(temp_cert_path)
+
+        except asyncio.TimeoutError:
+            return False, "Certificate validation timeout"
+        except Exception as e:
+            return False, f"Error validating certificate: {str(e)}"
+
+    async def _validate_ssl_key(self, key_data: str) -> tuple[bool, str]:
+        """验证 SSL 私钥格式（支持 RSA 和 ECC）"""
+        try:
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.key', delete=False) as f:
+                f.write(key_data)
+                temp_key_path = f.name
+
+            try:
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "rsa", "-in", temp_key_path, "-noout", "-check",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+                if process.returncode == 0:
+                    return True, "RSA private key is valid"
+
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "ec", "-in", temp_key_path, "-noout", "-check",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+                if process.returncode == 0:
+                    return True, "EC private key is valid"
+
+                stderr_text = stderr.decode() if stderr else ""
+                return False, f"Invalid private key format: {stderr_text}"
+
+            finally:
+
+                if os.path.exists(temp_key_path):
+                    os.remove(temp_key_path)
+
+        except asyncio.TimeoutError:
+            return False, "Private key validation timeout"
+        except Exception as e:
+            return False, f"Error validating private key: {str(e)}"
+
+    async def _validate_cert_key_match(self, cert_data: str, key_data: str) -> tuple[bool, str]:
+        """验证证书和私钥是否匹配"""
+        try:
+            import tempfile
+
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as f:
+                f.write(cert_data)
+                temp_cert_path = f.name
+
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.key', delete=False) as f:
+                f.write(key_data)
+                temp_key_path = f.name
+
+            try:
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "x509", "-in", temp_cert_path, "-noout", "-pubkey",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                cert_pubkey, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "pkey", "-in", temp_key_path, "-pubout",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                key_pubkey, _ = await asyncio.wait_for(process.communicate(), timeout=10)
+
+
+                if cert_pubkey == key_pubkey:
+                    return True, "Certificate and private key match"
+                else:
+                    return False, "Certificate and private key do not match"
+
+            finally:
+
+                if os.path.exists(temp_cert_path):
+                    os.remove(temp_cert_path)
+                if os.path.exists(temp_key_path):
+                    os.remove(temp_key_path)
+
+        except asyncio.TimeoutError:
+            return False, "Certificate and key match validation timeout"
+        except Exception as e:
+            return False, f"Error validating certificate and key match: {str(e)}"
+
+    async def _validate_ca_certificate(self, ca_data: str) -> tuple[bool, str]:
+        """验证 CA 证书链格式（可能包含多个证书）"""
+        try:
+
+            import tempfile
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.crt', delete=False) as f:
+                f.write(ca_data)
+                temp_ca_path = f.name
+
+            try:
+
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "crl2pkcs7", "-nocrl", "-certfile", temp_ca_path,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                p7_data, stderr = await asyncio.wait_for(process.communicate(), timeout=10)
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    return False, f"Invalid CA certificate format: {stderr_text}"
+
+
+                process = await asyncio.create_subprocess_exec(
+                    "openssl", "pkcs7", "-print_certs", "-noout",
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(input=p7_data),
+                    timeout=10
+                )
+
+                if process.returncode != 0:
+                    stderr_text = stderr.decode() if stderr else ""
+                    return False, f"Invalid CA certificate chain: {stderr_text}"
+
+                return True, "CA certificate chain is valid"
+
+            finally:
+
+                if os.path.exists(temp_ca_path):
+                    os.remove(temp_ca_path)
+
+        except asyncio.TimeoutError:
+            return False, "CA certificate validation timeout"
+        except Exception as e:
+            return False, f"Error validating CA certificate: {str(e)}"
+
+    @exposed_http("GET", "/system/ssl_cert")
+    async def get_ssl_cert_handler(self, request: Request) -> Response:
+        """获取 SSL 证书和私钥"""
+        try:
+            ssl_cert = ""
+            ssl_key = ""
+
+
+            if os.path.exists(self._ssl_cert_path):
+                with open(self._ssl_cert_path, "r") as f:
+                    ssl_cert = f.read()
+
+
+            if os.path.exists(self._ssl_key_path):
+                with open(self._ssl_key_path, "r") as f:
+                    ssl_key = f.read()
+
+            return make_json_response({
+                "success": True,
+                "ssl_cert": ssl_cert,
+                "ssl_key": ssl_key
+            })
+
+        except Exception as e:
+            self._logger.error(f"Error getting SSL certificate: {e}")
+            return make_json_exception(BadRequestError(f"Error getting SSL certificate: {str(e)}"), 502)
+
+    @exposed_http("POST", "/system/ssl_cert")
+    async def set_ssl_cert_handler(self, request: Request) -> Response:
+        """设置 SSL 证书和私钥"""
+        try:
+
+            data = await request.json()
+
+
+            ssl_cert = data.get("ssl_cert")
+            ssl_key = data.get("ssl_key")
+            ssl_ca = data.get("ssl_ca")
+
+
+            if not ssl_cert:
+                raise BadRequestError("ssl_cert parameter is required")
+            if not ssl_key:
+                raise BadRequestError("ssl_key parameter is required")
+
+
+            is_valid, msg = await self._validate_ssl_certificate(ssl_cert)
+            if not is_valid:
+                raise BadRequestError(f"Certificate validation failed: {msg}")
+
+            self._logger.info(f"Certificate validation: {msg}")
+
+
+            is_valid, msg = await self._validate_ssl_key(ssl_key)
+            if not is_valid:
+                raise BadRequestError(f"Private key validation failed: {msg}")
+
+            self._logger.info(f"Private key validation: {msg}")
+
+
+            is_valid, msg = await self._validate_cert_key_match(ssl_cert, ssl_key)
+            if not is_valid:
+                raise BadRequestError(f"Certificate and key match validation failed: {msg}")
+
+            self._logger.info(f"Certificate and key match validation: {msg}")
+
+
+            if ssl_ca:
+                is_valid, msg = await self._validate_ca_certificate(ssl_ca)
+                if not is_valid:
+                    raise BadRequestError(f"CA certificate validation failed: {msg}")
+
+                self._logger.info(f"CA certificate validation: {msg}")
+
+
+            os.makedirs(self._ssl_dir, mode=0o755, exist_ok=True)
+
+
+
+            if ssl_ca:
+
+                cert_content = ssl_cert.rstrip() + "\n" + ssl_ca.rstrip() + "\n"
+            else:
+                cert_content = ssl_cert.rstrip() + "\n"
+
+            with open(self._ssl_cert_path, "w") as f:
+                f.write(cert_content)
+
+
+            os.chmod(self._ssl_cert_path, 0o644)
+
+
+            with open(self._ssl_key_path, "w") as f:
+                f.write(ssl_key.rstrip() + "\n")
+
+
+            os.chmod(self._ssl_key_path, 0o600)
+
+
+            await asyncio.create_subprocess_shell("sync")
+
+            self._logger.info(f"Successfully saved SSL certificate to {self._ssl_cert_path} and key to {self._ssl_key_path}")
+
+
+            asyncio.create_task(self._restart_nginx())
+
+
+            return make_json_response({
+                "success": True,
+                "message": "SSL certificate and key saved successfully, Nginx will be restarted"
+            })
+
+        except json.JSONDecodeError:
+            return make_json_exception(BadRequestError("Invalid JSON format"), 400)
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error setting SSL certificate: {e}")
+            return make_json_exception(BadRequestError(f"Error setting SSL certificate: {str(e)}"), 502)
+

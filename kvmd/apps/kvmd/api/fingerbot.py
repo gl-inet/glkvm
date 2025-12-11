@@ -123,7 +123,7 @@ class FingerbotApi:
                     await sleep(1)
                     await self._read_version()
                     await self._read_battery()
-            await sleep(2)
+            await sleep(3)
 
     async def trigger_state(self) -> None:
         self.__need_update = True

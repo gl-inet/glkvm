@@ -57,6 +57,7 @@ from ...validators.basic import valid_bool
 from ...validators.kvm import valid_stream_quality
 from ...validators.kvm import valid_stream_fps
 from ...validators.kvm import valid_stream_resolution
+from ...validators.kvm import valid_stream_video_format
 from ...validators.kvm import valid_stream_h264_bitrate
 from ...validators.kvm import valid_stream_h264_gop
 from ...validators.kvm import valid_stream_zero_delay
@@ -80,6 +81,7 @@ from .api.astrowarp import AstrowarpApi
 from .api.fingerbot import FingerbotApi
 from .api.turn import TurnApi
 from .api.repeater import RepeaterApi
+from .api.modem import ModemApi
 from .api.wol import WolApi
 from .api.tailscale import TailscaleApi
 from .api.cloudflare import CloudflareApi
@@ -159,6 +161,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     __EV_RNDIS_STATE = "rndis"
     __EV_FINGERBOT_STATE = "fingerbot"
     __EV_REPEATER_STATE = "repeater"
+    __EV_MODEMO_STATE = "modem"
     __EV_TURN_STATE = "turn"
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-locals
@@ -197,6 +200,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         self.__fingerbot_api = FingerbotApi()
         self.__turn_api = TurnApi()
         self.__repeater_api = RepeaterApi()
+        self.__modem_api = ModemApi()
         self.__hid_api = HidApi(hid, keymap_path)
         self.__apis: list[object] = [
             self,
@@ -207,6 +211,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             self.__fingerbot_api,
             WolApi(),
             self.__repeater_api,
+            self.__modem_api,
             TailscaleApi(),
             CloudflareApi(),
             ZerotierApi(),
@@ -238,6 +243,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             _Subsystem.make(rndis,        "RNDIS",        self.__EV_RNDIS_STATE),
             _Subsystem.make(self.__fingerbot_api, "Fingerbot", self.__EV_FINGERBOT_STATE),
             _Subsystem.make(self.__repeater_api, "Repeater", self.__EV_REPEATER_STATE),
+            _Subsystem.make(self.__modem_api, "Modem", self.__EV_MODEMO_STATE),
             _Subsystem.make(self.__turn_api, "turn", self.__EV_TURN_STATE),
         ]
 
@@ -254,6 +260,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             ("quality",      valid_stream_quality,      StreamerQualityNotSupported),
             ("desired_fps",  valid_stream_fps,          None),
             ("resolution",   valid_stream_resolution,   StreamerResolutionNotSupported),
+            ("video_format", valid_stream_video_format, None),
             ("h264_bitrate", valid_stream_h264_bitrate, StreamerH264NotSupported),
             ("h264_gop",     valid_stream_h264_gop,     StreamerH264NotSupported),
             ("zero_delay",   valid_stream_zero_delay,   None),
@@ -350,9 +357,13 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         logger.info("On-Cleanup complete")
 
     async def _on_ws_opened(self, _: WsSession) -> None:
+
+        self.__hid.clear_events()
         self.__streamer_notifier.notify()
 
     async def _on_ws_closed(self, _: WsSession) -> None:
+
+
         self.__hid.clear_events()
         self.__streamer_notifier.notify()
 
@@ -365,13 +376,15 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     # ===== SYSTEM TASKS
 
     async def __stream_controller(self) -> None:
-        prev = False
+        prev_internal = False
         while True:
-            cur = (self.__has_stream_clients() or self.__snapshoter.snapshoting() or self.__stream_forever)
-            if not prev and cur:
-                await self.__streamer.ensure_start(reset=False)
-            elif prev and not cur:
-                await self.__streamer.ensure_stop(immediately=False)
+            internal_need = (self.__has_stream_clients() or self.__snapshoter.snapshoting() or self.__stream_forever)
+            if internal_need != prev_internal:
+                if internal_need:
+                    await self.__streamer.set_internal_stream_required(True)
+                else:
+                    await self.__streamer.set_internal_stream_required(False, stop_immediately=False)
+                prev_internal = internal_need
 
             if self.__reset_streamer or self.__new_streamer_params:
 
@@ -402,25 +415,24 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                     except Exception as e:
                         get_logger(0).error("Failed to update streamer params: %s", e)
 
-                        start = self.__streamer.is_working()
-                        await self.__streamer.ensure_stop(immediately=True)
+                        need_after = self.__streamer.is_required()
+                        await self.__streamer.ensure_stop(immediately=True, force=True)
                         self.__streamer.set_params(self.__new_streamer_params)
                         self.__new_streamer_params = {}
-                        if start:
+                        if need_after:
                             await self.__streamer.ensure_start(reset=self.__reset_streamer)
                 else:
 
-                    start = self.__streamer.is_working()
-                    await self.__streamer.ensure_stop(immediately=True)
+                    need_after = self.__streamer.is_required()
+                    await self.__streamer.ensure_stop(immediately=True, force=True)
                     if self.__new_streamer_params:
                         self.__streamer.set_params(self.__new_streamer_params)
                         self.__new_streamer_params = {}
-                    if start:
+                    if need_after:
                         await self.__streamer.ensure_start(reset=self.__reset_streamer)
 
                 self.__reset_streamer = False
 
-            prev = cur
             await self.__streamer_notifier.wait()
 
     async def __stream_snapshoter(self) -> None:

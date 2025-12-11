@@ -96,7 +96,8 @@ class MsdApi:
                     "size": info.get("size", 0) if isinstance(info, dict) else info,
                     "uuid": info.get("uuid", "") if isinstance(info, dict) else "",
                     "filesystem": info.get("filesystem", "") if isinstance(info, dict) else "",
-                    "label": info.get("label", "") if isinstance(info, dict) else ""
+                    "label": info.get("label", "") if isinstance(info, dict) else "",
+                    "is_current": info.get("is_current", False) if isinstance(info, dict) else False
                 }
                 for path, info in devices.items()
             }

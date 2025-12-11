@@ -66,6 +66,9 @@ from ..validators.basic import valid_string_list
 from ..validators.auth import valid_user
 from ..validators.auth import valid_users_list
 from ..validators.auth import valid_expire
+from ..validators.auth import valid_rate_limit_max_attempts
+from ..validators.auth import valid_rate_limit_time_window
+from ..validators.auth import valid_rate_limit_lockout_duration
 
 from ..validators.os import valid_abs_path
 from ..validators.os import valid_abs_file
@@ -89,6 +92,7 @@ from ..validators.hid import valid_hid_mouse_move
 from ..validators.kvm import valid_stream_quality
 from ..validators.kvm import valid_stream_fps
 from ..validators.kvm import valid_stream_resolution
+from ..validators.kvm import valid_stream_video_format
 from ..validators.kvm import valid_stream_h264_bitrate
 from ..validators.kvm import valid_stream_h264_gop
 from ..validators.kvm import valid_stream_zero_delay
@@ -391,10 +395,16 @@ def _get_config_scheme() -> dict:
         model = ""
 
 
-    if model == "rm1":
+    try:
+        with open("/proc/gl-hw-info/usb_pid", "r") as f:
+            pid_str = f.read().strip()
+
+            if pid_str.startswith("0x") or pid_str.startswith("0X"):
+                default_product_id = int(pid_str, 16)
+            else:
+                default_product_id = int(pid_str, 0)
+    except:
         default_product_id = 0x0104
-    else:
-        default_product_id = 0x0105
 
     return {
         "logging": Option({}),
@@ -433,6 +443,13 @@ def _get_config_scheme() -> dict:
                     "secret": {
                         "file": Option("/etc/kvmd/user/totp.secret", type=valid_abs_path, if_empty=""),
                     },
+                },
+
+                "rate_limit": {
+                    "enabled":           Option(True, type=valid_bool),
+                    "max_attempts":      Option(10,   type=valid_rate_limit_max_attempts),
+                    "time_window":       Option(600,  type=valid_rate_limit_time_window),
+                    "lockout_duration":  Option(600,  type=valid_rate_limit_lockout_duration),
                 },
             },
 
@@ -502,6 +519,8 @@ def _get_config_scheme() -> dict:
                     "min":     Option(0,  type=valid_stream_fps, unpack_as="desired_fps_min"),
                     "max":     Option(70, type=valid_stream_fps, unpack_as="desired_fps_max"),
                 },
+
+                "video_format": Option(0, type=valid_stream_video_format),
 
                 "h264_bitrate": {
                     "default": Option(0,     type=valid_stream_h264_bitrate, if_empty=0, unpack_as="h264_bitrate"),
@@ -618,7 +637,7 @@ def _get_config_scheme() -> dict:
         },
 
         "otg": {
-            "vendor_id":      Option(0x1D6B, type=valid_otg_id),  # Linux Foundation
+            "vendor_id":      Option(0x38eb, type=valid_otg_id),
             "product_id":     Option(default_product_id, type=valid_otg_id),
             "manufacturer":   Option("Glinet", type=valid_stripped_string),
             "product":        Option("Glinet Composite Device", type=valid_stripped_string),
@@ -696,6 +715,7 @@ def _get_config_scheme() -> dict:
                 "audio": {
                     "enabled":  Option(False, type=valid_bool),
                     "start":    Option(True,  type=valid_bool),
+                    "product":  Option("Comet Microphone", type=valid_stripped_string),
                 },
 
                 "drives": {

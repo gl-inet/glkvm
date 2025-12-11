@@ -39,7 +39,11 @@ async def ubus_call_async(service, method, args={}):
     encoding = chardet.detect(stdout)['encoding'] or 'utf-8'
     decoded_output = stdout.decode(encoding, errors='replace')
 
-    return json.loads(decoded_output)
+    try:
+        return json.loads(stdout)
+    except Exception as e:
+        logger.error(f"Error encoding: {encoding}")
+        return json.loads(decoded_output)
 
 class RepeaterApi:
 
@@ -69,7 +73,7 @@ class RepeaterApi:
         try:
             res = await ubus_call_async("repeater", "scan")
 
-            return make_json_response({"ap_list": res['ap_list']})
+            return make_json_response(res)
         except Exception as e:
             self._logger.error(f"Error executing repeater command: {e}")
             return make_json_exception(BadRequestError(f"Failed to get ap list:{e}"), 502)
@@ -89,7 +93,7 @@ class RepeaterApi:
             if not ssid:
                 return make_json_exception(BadRequestError("Missing SSID"), 400)
 
-            res = await ubus_call_async("repeater", "connect", {"ssid": ssid, "key": key})
+            res = await ubus_call_async("repeater", "connect", data)
 
             if res["err_code"] != 0:
                 return make_json_response({"result": "failed"})

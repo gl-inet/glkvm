@@ -27,6 +27,7 @@ import functools
 import time
 import os
 import copy
+import re
 
 from typing import AsyncGenerator
 
@@ -63,6 +64,7 @@ from .drive import Drive
 
 from asyncio import create_subprocess_exec
 import subprocess
+import yaml
 
 
 # =====
@@ -139,7 +141,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         return None
 
     def __notify_remount(self) -> None:
-        """通知systask重新初始化inotify监听器，用于处理分区重新挂载的情况"""
+
         logger = get_logger(0)
         logger.info("Partition remount detected, notifying systask to reinitialize inotify...")
         self.__reset = True
@@ -265,6 +267,9 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                     del vd_partition["image"]["path"]
 
 
+            available_devices = await self.partition_show()
+
+
             return {
                 "enabled": True,
                 "online": (bool(vd) and self.__drive.is_enabled()),
@@ -272,6 +277,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 "storage": storage,
                 "drive": vd,
                 "drive_partition": vd_partition,
+                "available_devices": available_devices,
             }
 
     async def trigger_state(self) -> None:
@@ -288,7 +294,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                 yield new
             else:
                 diff: dict = {}
-                for sub in ["busy", "drive"]:
+                for sub in ["busy", "drive", "drive_partition"]:
                     if prev.get(sub) != new[sub]:
                         diff[sub] = new[sub]
                 for sub in ["images", "parts", "downloading", "uploading"]:
@@ -296,6 +302,9 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                         if "storage" not in diff:
                             diff["storage"] = {}
                         diff["storage"][sub] = new["storage"][sub]
+
+                if prev.get("available_devices") != new["available_devices"]:
+                    diff["available_devices"] = new["available_devices"]
                 if diff:
                     prev = copy.deepcopy(new)
                     yield diff
@@ -371,16 +380,59 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
             self.__state.vd.connected = connected
 
+    def __parse_blkid_output(self, output: str) -> dict:
+
+
+
+
+
+
+
+        uuid = ""
+        filesystem = ""
+        label = ""
+
+
+
+        pattern = r'(\w+)=(?:"([^"]*)"|([^\s]+))'
+        matches = re.findall(pattern, output)
+
+        parsed_data = {}
+        for match in matches:
+            key = match[0]
+
+            value = match[1] if match[1] else match[2]
+            parsed_data[key] = value
+
+
+        if "UUID" in parsed_data:
+            uuid = parsed_data["UUID"]
+
+
+        if "TYPE" in parsed_data:
+            filesystem = parsed_data["TYPE"]
+
+
+        if "LABEL" in parsed_data:
+            label = parsed_data["LABEL"]
+        elif "LABEL_FATBOOT" in parsed_data:
+            label = parsed_data["LABEL_FATBOOT"]
+
+        return {
+            "uuid": uuid,
+            "filesystem": filesystem,
+            "label": label
+        }
+
     async def __get_partition_info(self, dev_path: str, size_kb: int) -> dict:
-        """获取分区的详细信息
 
-        Args:
-            dev_path: 分区设备路径
-            size_kb: 分区大小(KB)
 
-        Returns:
-            包含分区信息的字典,包括size、uuid、filesystem和label
-        """
+
+
+
+
+
+
 
         uuid = ""
         filesystem = ""
@@ -395,12 +447,12 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             stdout, _ = await process.communicate()
             output = stdout.decode().strip()
 
-            if "UUID=" in output:
-                uuid = output.split("UUID=")[1].split()[0].strip('"')
-            if "TYPE=" in output:
-                filesystem = output.split("TYPE=")[1].split()[0].strip('"')
-            if "LABEL=" in output:
-                label = output.split("LABEL=")[1].split()[0].strip('"')
+
+            parsed_info = self.__parse_blkid_output(output)
+            uuid = parsed_info["uuid"]
+            filesystem = parsed_info["filesystem"]
+            label = parsed_info["label"]
+
         except Exception as e:
             get_logger(0).error(f"Failed to get UUID, filesystem type and label for {dev_path}: {e}")
 
@@ -415,6 +467,9 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
     @aiotools.atomic_fg
     async def partition_show(self) -> dict[str, dict]:
         devices = {}
+
+        current_partition = os.path.realpath(self.__partition_device)
+
 
         try:
             with open("/proc/partitions", "r") as f:
@@ -439,12 +494,18 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
                                 if len(dev_name) > len(disk_name):
                                     dev_path = f"/dev/{dev_name}"
-                                    devices[dev_path] = await self.__get_partition_info(dev_path, size_kb)
+                                    partition_info = await self.__get_partition_info(dev_path, size_kb)
+
+                                    partition_info["is_current"] = (dev_path == current_partition)
+                                    devices[dev_path] = partition_info
                             except (IOError, OSError):
                                 continue
                         if dev_name.startswith("mmcblk0p10"):
                             dev_path = f"/dev/{dev_name}"
-                            devices[dev_path] = await self.__get_partition_info(dev_path, size_kb)
+                            partition_info = await self.__get_partition_info(dev_path, size_kb)
+
+                            partition_info["is_current"] = (dev_path == current_partition)
+                            devices[dev_path] = partition_info
         except (IOError, OSError) as e:
             get_logger(0).error(f"Error reading partitions: {str(e)}")
 
@@ -475,11 +536,10 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             self.__state.vd_partition.image = await self.__storage.make_image_by_path(path)
 
     async def __clean_trash_dirs(self, mount_path: str) -> None:
-        """清理指定路径下的回收站目录
 
-        Args:
-            mount_path: 要清理的挂载路径
-        """
+
+
+
         logger = get_logger(0)
         trash_dirs = [".Trashes", "$RECYCLE.BIN", ".Trash-1000"]
         for trash_dir in trash_dirs:
@@ -497,16 +557,15 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                             logger.error(f"Failed to remove trash directory {trash_path}: {e}")
 
     async def __run_command(self, cmd: str, args: list[str], error_msg: str) -> bool:
-        """执行命令并处理结果
 
-        Args:
-            cmd: 要执行的命令
-            args: 命令参数列表
-            error_msg: 错误信息前缀
 
-        Returns:
-            bool: 命令是否成功执行
-        """
+
+
+
+
+
+
+
         logger = get_logger(0)
         try:
             process = await create_subprocess_exec(
@@ -524,6 +583,155 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             logger.error(f"{error_msg}: {str(e)}")
             return False
 
+    async def __get_device_uuid(self, device_path: str) -> str:
+
+
+
+
+
+
+
+        logger = get_logger(0)
+        try:
+            process = await create_subprocess_exec(
+                "blkid",
+                device_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, _ = await process.communicate()
+            output = stdout.decode().strip()
+
+
+            parsed_info = self.__parse_blkid_output(output)
+            uuid = parsed_info.get("uuid", "")
+
+            if uuid:
+                logger.info(f"Got UUID for {device_path}: {uuid}")
+            else:
+                logger.warning(f"No UUID found for {device_path}")
+
+            return uuid
+        except Exception as e:
+            logger.error(f"Failed to get UUID for {device_path}: {e}")
+            return ""
+
+    async def __read_boot_yaml(self) -> dict:
+
+
+
+
+        logger = get_logger(0)
+        config_path = "/etc/kvmd/user/boot.yaml"
+        try:
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    return yaml.safe_load(f) or {}
+            return {}
+        except Exception as e:
+            logger.error(f"Cannot read config file {config_path}: {e}")
+            return {}
+
+    async def __write_boot_yaml(self, data: dict) -> None:
+
+
+
+
+        logger = get_logger(0)
+        config_path = "/etc/kvmd/user/boot.yaml"
+        try:
+            os.makedirs(os.path.dirname(config_path), exist_ok=True)
+            with open(config_path, "w") as f:
+                yaml.dump(data, f, default_flow_style=False)
+            await asyncio.create_subprocess_shell("sync")
+            logger.info(f"Successfully wrote config to {config_path}")
+        except Exception as e:
+            logger.error(f"Cannot write config file {config_path}: {e}")
+
+    async def __check_and_update_uuid_if_changed(self, device_path: str) -> None:
+
+
+
+
+        logger = get_logger(0)
+
+        try:
+
+            current_partition_device = self.__partition_device
+            logger.info(f"current_partition_device: {current_partition_device}")
+
+
+            real_device_path = os.path.realpath(device_path)
+
+
+            new_uuid = await self.__get_device_uuid(real_device_path)
+
+            if not new_uuid:
+                logger.warning(f"Could not get UUID for {real_device_path}, skipping UUID update")
+                return
+
+
+            new_uuid_path = f"/dev/disk/by-uuid/{new_uuid}"
+
+
+            if current_partition_device.startswith("/dev/disk/by-uuid/"):
+
+                old_uuid = os.path.basename(current_partition_device)
+
+                if old_uuid != new_uuid:
+                    logger.info(f"UUID changed: {old_uuid} -> {new_uuid}, updating configuration")
+
+
+                    boot_config = await self.__read_boot_yaml()
+
+
+                    if "kvmd" not in boot_config:
+                        boot_config["kvmd"] = {}
+                    if "msd" not in boot_config["kvmd"]:
+                        boot_config["kvmd"]["msd"] = {}
+                    boot_config["kvmd"]["msd"]["partition_device"] = new_uuid_path
+
+
+                    await self.__write_boot_yaml(boot_config)
+
+
+                    self.__partition_device = new_uuid_path
+
+
+                    self.__state.vd_partition.image = await self.__storage.make_image_by_path(new_uuid_path)
+
+                    logger.info(f"Successfully updated partition_device to {new_uuid_path}")
+                else:
+                    logger.info(f"UUID unchanged: {new_uuid}")
+            elif os.path.realpath(current_partition_device) == real_device_path:
+
+                logger.info(f"Converting partition_device from {current_partition_device} to UUID path {new_uuid_path}")
+
+
+                boot_config = await self.__read_boot_yaml()
+
+
+                if "kvmd" not in boot_config:
+                    boot_config["kvmd"] = {}
+                if "msd" not in boot_config["kvmd"]:
+                    boot_config["kvmd"]["msd"] = {}
+                boot_config["kvmd"]["msd"]["partition_device"] = new_uuid_path
+
+
+                await self.__write_boot_yaml(boot_config)
+
+
+                self.__partition_device = new_uuid_path
+
+
+                self.__state.vd_partition.image = await self.__storage.make_image_by_path(new_uuid_path)
+
+                logger.info(f"Successfully converted partition_device to UUID path {new_uuid_path}")
+
+        except Exception as e:
+            logger.error(f"Failed to check and update UUID: {e}")
+
+
     @aiotools.atomic_fg
     async def partition_disconnect(self) -> None:
         async with self.__state.busy():
@@ -534,6 +742,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
 
                 path = os.path.realpath(self.__state.vd_partition.image.path)
+
             self.__drive_partition.set_image_path("")
             await asyncio.sleep(1)
             self.__state.vd_partition.connected = False
@@ -551,6 +760,9 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
 
                         await self.__clean_trash_dirs(mount_path)
 
+
+                        await self.__check_and_update_uuid_if_changed(path)
+
                     except Exception as e:
                         get_logger(0).error(f"Failed to remount partition {path} to {mount_path}: {e}")
 
@@ -562,42 +774,106 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         await self.__reload_state()
 
     @aiotools.atomic_fg
-    async def partition_format(self, path: str) -> None:
-        async with self.__state.busy():
-            assert self.__state.vd_partition
+    async def __do_format(self,path: str = "") -> None:
 
-            if not path or path.strip() == "":
-                path = self.__partition_device
-
-            remounted = False
-            try:
-
-                get_logger(0).info(f"Umounting {path}")
-                await aiohelpers.umount(path)
+        if not path or path.strip() == "":
+            path = self.__partition_device
 
 
-                get_logger(0).info(f"Formatting {path}")
-                if not await self.__run_command("mkfs.exfat", [path], "mkfs.exfat command failed"):
-                    raise Exception("Failed to format partition")
+        real_path = os.path.realpath(path)
 
 
-                if not await self.__run_command("exfatlabel", [path, "GLKVM"], "exfatlabel command failed"):
-                    get_logger(0).warning("Failed to set volume label, but continuing anyway")
+        old_label = ""
+        try:
+            process = await create_subprocess_exec(
+                "blkid",
+                real_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            stdout, _ = await process.communicate()
+            output = stdout.decode().strip()
+            parsed_info = self.__parse_blkid_output(output)
+            old_label = parsed_info.get("label", "")
+            if old_label:
+                get_logger(0).info(f"Original volume label: {old_label}")
+        except Exception as e:
+            get_logger(0).warning(f"Failed to get original label: {e}")
+
+        remounted = False
+        try:
+
+            get_logger(0).info(f"Umounting {path}")
+            await aiohelpers.umount(path)
 
 
-                mount_path = self.get_mount_path(path)
-                if mount_path:
-                    await aiohelpers.mount(path, mount_path, "rw", cmd=["mount"])
-                    remounted = True
-            except Exception as e:
-                get_logger(0).error(f"Failed to umount or format partition: {e}")
-                raise
+            get_logger(0).info(f"Formatting {path}")
+            if not await self.__run_command("mkfs.exfat", [real_path], "mkfs.exfat command failed"):
+                raise Exception("Failed to format partition")
+
+
+            if old_label:
+                get_logger(0).info(f"Restoring volume label: {old_label}")
+                if not await self.__run_command("exfatlabel", [real_path, old_label], "exfatlabel command failed"):
+                    get_logger(0).warning("Failed to restore volume label, write GLKVM in label instead")
+
+                    if not await self.__run_command("exfatlabel", [real_path, "GLKVM"], "exfatlabel command failed"):
+                        get_logger(0).error("Failed to write GLKVM in label")
+
+
+            new_uuid = await self.__get_device_uuid(real_path)
+
+            if new_uuid:
+
+                try:
+                    boot_config = await self.__read_boot_yaml()
+
+
+                    new_uuid_path = f"/dev/disk/by-uuid/{new_uuid}"
+
+
+                    if "kvmd" not in boot_config:
+                        boot_config["kvmd"] = {}
+                    if "msd" not in boot_config["kvmd"]:
+                        boot_config["kvmd"]["msd"] = {}
+                    boot_config["kvmd"]["msd"]["partition_device"] = new_uuid_path
+
+
+                    await self.__write_boot_yaml(boot_config)
+
+
+                    self.__partition_device = new_uuid_path
+
+                    get_logger(0).info(f"Updated partition_device to {new_uuid_path} in boot.yaml")
+                except Exception as e:
+                    get_logger(0).error(f"Failed to update boot.yaml with new UUID: {e}")
+
+            else:
+                get_logger(0).warning("Could not get new UUID after formatting, partition_device not updated")
+
+
+            mount_path = self.get_mount_path(real_path)
+            if mount_path:
+                await aiohelpers.mount(real_path, mount_path, "rw", cmd=["mount"])
+                remounted = True
+        except Exception as e:
+            get_logger(0).error(f"Failed to umount or format partition: {e}")
+            raise
 
 
         if remounted:
             self.__notify_remount()
 
+    @aiotools.atomic_fg
+    async def partition_format(self, path: str = "") -> None:
+        if path is None or path.strip() == "":
+            async with self.__state.busy():
+                await self.__do_format(self.__partition_device)
+        else:
+            await self.__do_format(path)
+
         await self.__reload_state()
+
 
     @contextlib.asynccontextmanager
     async def read_image(self, name: str) -> AsyncGenerator[MsdFileReader, None]:
@@ -765,6 +1041,8 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                     await inotify.watch_all_changes(*self.__storage.get_watchable_paths())
                     await inotify.watch_all_changes(*self.__drive.get_watchable_paths())
 
+                    await inotify.watch_create_and_delete("/dev")
+
 
 
                     await self.__reload_state()
@@ -774,8 +1052,17 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
                         self.__reset = False
                         need_reload_state = False
                         for event in (await inotify.get_series(timeout=1)):
-                            need_reload_state = True
-                            if event.restart:
+
+                            if (event.path.startswith("/dev") and event.name and
+                                event.name.startswith("sd") and len(event.name) > 3):
+
+                                logger.info("Detected USB device change: %s", event.path)
+                                need_reload_state = True
+                            elif not event.path.startswith("/dev"):
+
+                                need_reload_state = True
+
+                            if event.restart and not event.path.startswith("/dev"):
                                 # Если выгрузили OTG, изменили каталоги, что-то отмонтировали или делают еще какую-то странную фигню.
                                 # Проверяется маска InotifyMask.ALL_RESTART_EVENTS
                                 logger.info("Got a big inotify event: %s; reinitializing MSD ...", event)

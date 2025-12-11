@@ -78,16 +78,18 @@ class Stun:
         try:
 
             src_fam = socket.AF_INET
-            stun_ips = [
-                stun_addr[0]
-                for (stun_fam, _, _, _, stun_addr) in (await self.__retried_getaddrinfo_udp(self.__host, self.__port))
-                if stun_fam == src_fam
-            ]
-            if not stun_ips:
-                raise RuntimeError(f"Can't resolve {src_fam.name} address for STUN")
-            if not self.__stun_ip or self.__stun_ip not in stun_ips:
-                # On new IP, changed family, etc.
+
+
+            if not self.__stun_ip:
+                stun_ips = [
+                    stun_addr[0]
+                    for (stun_fam, _, _, _, stun_addr) in (await self.__retried_getaddrinfo_udp(self.__host, self.__port))
+                    if stun_fam == src_fam
+                ]
+                if not stun_ips:
+                    raise RuntimeError(f"Can't resolve {src_fam.name} address for STUN")
                 self.__stun_ip = stun_ips[0]
+                get_logger(0).debug("Resolved STUN server %s to IP: %s", self.__host, self.__stun_ip)
 
             '''
             with socket.socket(src_fam, socket.SOCK_DGRAM) as self.__sock:
@@ -98,7 +100,7 @@ class Stun:
                 ext_ip = (resp.ext.ip if resp.ext is not None else "")
             '''
 
-            _nat_type, ext_ip, ext_port = get_ip_info(stun_host=self.__host, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
+            _nat_type, ext_ip, ext_port = get_ip_info(stun_host=self.__stun_ip, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
 
             value_to_member_map = {member.value: member for member in StunNatType}
             nat_type = value_to_member_map.get(_nat_type)
@@ -111,8 +113,15 @@ class Stun:
 
         except Exception as ex:
             get_logger(0).error("Can't get STUN info: %s", tools.efmt(ex))
+
+            if self.__stun_ip:
+                self.__stun_ip = ""
         finally:
             self.__sock = None
+
+
+        if not ext_ip:
+            self.__stun_ip = ""
 
         return StunInfo(
             nat_type=nat_type,

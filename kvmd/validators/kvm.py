@@ -98,6 +98,10 @@ def valid_stream_resolution(arg: Any) -> str:
     return f"{width}x{height}"
 
 
+def valid_stream_video_format(arg: Any) -> str:
+    return int(valid_number(arg, min=0, max=1, name="video format"))
+
+
 def valid_stream_h264_bitrate(arg: Any) -> int:
     return int(valid_number(arg, min=25, max=20000, name="stream H264 bitrate"))
 

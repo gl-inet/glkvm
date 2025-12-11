@@ -22,6 +22,9 @@ EDID_FILE = "/tmp/edid.bin"
 EDID_USER_FILE = "/etc/kvmd/user/edid.txt"
 LOG_DIR = "/tmp/log"
 LT6911C_UPGRADE_CMD = "lt6911c_upgrade -d /dev/i2c-1 -e /tmp/edid.bin && sleep 1 && echo 1 >  /sys/bus/i2c/devices/1-002b/reset"
+GSV1127X_UPGRADE_CMD = "echo 0 > /sys/bus/i2c/devices/1-0058/poll_interval_enable && sleep 1 " \
+                            "&& gsv1127x_upgrade -d /dev/i2c-1 -e /tmp/edid.bin && sleep 1 " \
+                            "&& echo 1 > /sys/bus/i2c/devices/1-0058/poll_interval_enable"
 MODEL_PATH = "/proc/gl-hw-info/model"
 BASE_URL = "https://fw.gl-inet.com/kvm/{model}/release"
 
@@ -38,6 +41,9 @@ class UpgradeApi:
         except Exception as e:
             get_logger(0).warning(f"Failed to read model info, using default value rm1: {str(e)}")
             model = "rm1"
+
+
+        self.__model = model
 
 
         self.__version_url = f"{BASE_URL.format(model=model)}/version"
@@ -256,16 +262,23 @@ class UpgradeApi:
                 f.write(edid_str)
             await asyncio.create_subprocess_shell("sync")
 
+            cmd_map = {
+                "rm10rc": GSV1127X_UPGRADE_CMD,
+            }
+
+            edid_cmd = cmd_map.get(self.__model, LT6911C_UPGRADE_CMD)
+
+
 
             proc = await asyncio.create_subprocess_shell(
-                LT6911C_UPGRADE_CMD,
+                edid_cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                raise BadRequestError(f"Failed to execute lt6911c_upgrade: {stderr.decode()}")
+                raise BadRequestError(f"Failed to execute x_upgrade: {stderr.decode()}")
 
             return make_json_response({
                 "status": "success",
@@ -315,7 +328,10 @@ class UpgradeApi:
                 "cat /etc/glinet/gl-cloud.conf": f"{LOG_DIR}/gl-cloud.conf_{timestamp}.log",
                 "ifconfig": f"{LOG_DIR}/ifconfig_{timestamp}.log",
                 "wg": f"{LOG_DIR}/wg_{timestamp}.log",
-                "[ -f /userdata/gl_kvm_monitor.log ] && cat /userdata/gl_kvm_monitor.log": f"{LOG_DIR}/monitor_{timestamp}.log"
+                "[ -f /tmp/channel_occupancy.json ] && cat /tmp/channel_occupancy.json": f"{LOG_DIR}/channel_occupancy_{timestamp}.json",
+                "[ -f /sys/fs/pstore/console-ramoops-0 ] && cat /sys/fs/pstore/console-ramoops-0": f"{LOG_DIR}/console_ramoops_0_{timestamp}.log",
+                "[ -f /sys/fs/pstore/dmesg-ramoops-0 ] && cat /sys/fs/pstore/dmesg-ramoops-0": f"{LOG_DIR}/dmesg_ramoops_0_{timestamp}.log",
+                "[ -f /sys/fs/pstore/dmesg-ramoops-1 ] && cat /sys/fs/pstore/dmesg-ramoops-1": f"{LOG_DIR}/dmesg_ramoops_1_{timestamp}.log"
             }
 
 

@@ -52,6 +52,7 @@ class _StreamerParams:
     __RESOLUTION = "resolution"
     __AVAILABLE_RESOLUTIONS = "available_resolutions"
 
+    __VIDEO_FORMAT = "video_format"
     __H264_BITRATE = "h264_bitrate"
     __H264_GOP = "h264_gop"
     __ZERO_DELAY = "zero_delay"
@@ -66,6 +67,8 @@ class _StreamerParams:
         desired_fps: int,
         desired_fps_min: int,
         desired_fps_max: int,
+
+        video_format: int,
 
         h264_bitrate: int,
         h264_bitrate_min: int,
@@ -92,6 +95,8 @@ class _StreamerParams:
             self.__params[self.__RESOLUTION] = resolution
             self.__limits[self.__AVAILABLE_RESOLUTIONS] = available_resolutions
 
+        self.__params[self.__VIDEO_FORMAT] = video_format
+
         if self.__has_h264:
             self.__params[self.__H264_BITRATE] = min(max(h264_bitrate, h264_bitrate_min), h264_bitrate_max)
             self.__limits[self.__H264_BITRATE] = {"min": h264_bitrate_min, "max": h264_bitrate_max}
@@ -106,6 +111,7 @@ class _StreamerParams:
             self.__QUALITY: self.__has_quality,
             self.__RESOLUTION: self.__has_resolution,
             "h264": self.__has_h264,
+            "h265": self.__has_h264,
             "zero_delay": True,
         }
 
@@ -136,6 +142,9 @@ class _StreamerParams:
             if key in params and enabled:
                 if self.__check_limits_min_max(key, params[key]):
                     new_params[key] = params[key]
+
+        if self.__VIDEO_FORMAT in params and self.__has_h264:
+            new_params[self.__VIDEO_FORMAT] = params[self.__VIDEO_FORMAT]
 
 
         if self.__ZERO_DELAY in params:
@@ -196,6 +205,13 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
 
         self.__params = _StreamerParams(**params_kwargs)
 
+        self.__internal_required = False
+        self.__external_required = False
+
+        self.__need_flag_path = "/tmp/need_ustreamer"
+        self.__need_flag_poll_interval = 1.0
+        self.__need_flag_state: (bool | None) = None
+
         self.__stop_task: (asyncio.Task | None) = None
         self.__stop_wip = False
 
@@ -238,9 +254,17 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
             await self.__inner_start()
 
     @aiotools.atomic_fg
-    async def ensure_stop(self, immediately: bool) -> None:
+    async def ensure_stop(self, immediately: bool, *, force: bool=False) -> None:
         if self.__streamer_task:
             logger = get_logger(0)
+
+            if not force and (self.__internal_required or self.__external_required):
+                logger.info(
+                    "Skip stopping streamer: still needed (internal=%s external=%s)",
+                    self.__internal_required,
+                    self.__external_required,
+                )
+                return
 
             if immediately:
                 if self.__stop_task:
@@ -390,7 +414,7 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
 
     @aiotools.atomic_fg
     async def cleanup(self) -> None:
-        await self.ensure_stop(immediately=True)
+        await self.ensure_stop(immediately=True, force=True)
         if self.__client_session:
             await self.__client_session.close()
             self.__client_session = None
@@ -416,6 +440,85 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         await self.__kill_streamer_proc()
         await self.__run_hook("POST-STOP-CMD", self.__post_stop_cmd)
         self.__streamer_task = None
+
+    async def systask(self) -> None:
+        logger = get_logger(0)
+        while True:
+            try:
+                need_streamer = await self.__read_need_flag()
+                if need_streamer != self.__need_flag_state:
+                    self.__need_flag_state = need_streamer
+                    if need_streamer:
+                        logger.info("need_ustreamer=1, external stream demand acquired")
+                    else:
+                        logger.info("need_ustreamer!=1, external stream demand released")
+                    await self.set_external_stream_required(need_streamer)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("Failed to handle need_ustreamer flag")
+            try:
+                await asyncio.sleep(self.__need_flag_poll_interval)
+            except asyncio.CancelledError:
+                raise
+
+    async def __read_need_flag(self) -> bool:
+        try:
+            text = await aiotools.read_file(self.__need_flag_path)
+        except FileNotFoundError:
+            return False
+        return (text.strip() == "1")
+
+    def is_required(self) -> bool:
+        return (self.__internal_required or self.__external_required)
+
+    @aiotools.atomic_fg
+    async def set_internal_stream_required(
+        self,
+        need: bool,
+        *,
+        reset: bool=False,
+        stop_immediately: bool=False,
+    ) -> None:
+        if self.__internal_required == need and not reset:
+            return
+
+        self.__internal_required = need
+
+        if need:
+            if reset and self.is_working():
+                await self.restart(reset=True, immediately=True)
+            else:
+                await self.ensure_start(reset=reset)
+        else:
+            await self.__maybe_stop(immediately=stop_immediately)
+
+    @aiotools.atomic_fg
+    async def set_external_stream_required(self, need: bool) -> None:
+        if self.__external_required == need:
+            return
+
+        self.__external_required = need
+        if need:
+            await self.ensure_start(reset=False)
+        else:
+            await self.__maybe_stop(immediately=True)
+
+    async def __maybe_stop(self, immediately: bool) -> None:
+        if self.__internal_required or self.__external_required:
+            return
+        await self.ensure_stop(immediately=immediately)
+
+    @aiotools.atomic_fg
+    async def restart(self, reset: bool, immediately: bool) -> None:
+        if not self.__streamer_task:
+            if self.is_required():
+                await self.ensure_start(reset=reset)
+            return
+
+        await self.ensure_stop(immediately=immediately, force=True)
+        if self.is_required():
+            await self.ensure_start(reset=reset)
 
     # =====
 

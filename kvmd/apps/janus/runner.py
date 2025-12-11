@@ -128,23 +128,13 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         while True:
             retry = 0
             netcfg = _Netcfg()
-            for retry in range(1 if prev_netcfg is None else self.__check_retries):
+            for retry in range(1):
                 netcfg = await self.__get_netcfg()
                 if netcfg.ext_ip:
                     break
                 await asyncio.sleep(self.__check_retries_delay)
             if retry != 0 and netcfg.ext_ip:
                 logger.info("I'm fine, continue working ...")
-
-
-
-
-
-
-
-
-
-
 
             if prev_netcfg is None:
                 logger.info("Initializing Janus with %s ...", netcfg)
@@ -172,7 +162,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     else:
                         logger.error("Empty src_ip; stopping Janus ...")
                         await self.__stop_janus()
-                elif netcfg_diff_times <= 6:
+                elif netcfg_diff_times <= self.__check_retries:
                     netcfg_diff_times += 1
                     logger.info("Public IP address changed from %s %s to %s %s, but it's not stable yet, waiting %d seconds ...", prev_netcfg.ext_ip, prev_netcfg.nat_type, netcfg.ext_ip, netcfg.nat_type, self.__check_interval)
                     await asyncio.sleep(self.__check_interval)

@@ -190,7 +190,7 @@ class TailscaleApi:
         """
         try:
             process = await asyncio.create_subprocess_exec(
-                "pgrep", "-f", "tailscaled",
+                "pidof", "tailscaled",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )

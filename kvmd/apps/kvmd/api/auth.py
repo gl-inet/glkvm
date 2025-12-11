@@ -33,6 +33,8 @@ from ....htserver import make_json_response
 from ....htserver import set_request_auth_info
 from ....htserver import get_request_unix_credentials
 
+from ..auth import RateLimitError
+
 from ....validators.auth import valid_user
 from ....validators.auth import valid_passwd
 from ....validators.auth import valid_expire
@@ -128,14 +130,27 @@ class AuthApi:
     async def __login_handler(self, req: Request) -> Response:
         if self.__auth_manager.is_auth_enabled():
             credentials = await req.post()
-            token = await self.__auth_manager.login(
-                user=valid_user(credentials.get("user", "")),
-                passwd=valid_passwd(credentials.get("passwd", "")),
-                expire=valid_expire(credentials.get("expire", "0")),
-            )
-            if token:
-                return make_json_response({"token": token}, set_cookies={_COOKIE_AUTH_TOKEN: token})
-            raise ForbiddenError()
+
+
+            client_ip = self.__auth_manager._get_client_ip(dict(req.headers))
+
+            try:
+                token = await self.__auth_manager.login(
+                    user=valid_user(credentials.get("user", "")),
+                    passwd=valid_passwd(credentials.get("passwd", "")),
+                    expire=valid_expire(credentials.get("expire", "0")),
+                    client_ip=client_ip,
+                )
+                if token:
+                    return make_json_response({"token": token}, set_cookies={_COOKIE_AUTH_TOKEN: token})
+                raise ForbiddenError()
+            except RateLimitError as ex:
+
+                return make_json_response({
+                    "error": "RateLimitError",
+                    "error_msg": str(ex),
+                    "remaining_time": ex.remaining_time
+                }, status=429)
         return make_json_response()
 
     @exposed_http("POST", "/auth/logout", allow_usc=False)
@@ -149,3 +164,40 @@ class AuthApi:
     @exposed_http("GET", "/auth/check", allow_usc=False)
     async def __check_handler(self, _: Request) -> Response:
         return make_json_response()
+
+    @exposed_http("GET", "/auth/rate_limit_status")
+    async def __rate_limit_status_handler(self, req: Request) -> Response:
+        if self.__auth_manager.is_auth_enabled():
+            client_ip = req.query.get("client_ip")
+            if not client_ip:
+
+                client_ip = self.__auth_manager._get_client_ip(dict(req.headers))
+
+            status = self.__auth_manager.get_rate_limit_status(client_ip)
+            return make_json_response(status)
+        return make_json_response({"enabled": False})
+
+    @exposed_http("GET", "/auth/locked_clients")
+    async def __locked_clients_handler(self, _: Request) -> Response:
+        if self.__auth_manager.is_auth_enabled():
+            locked_clients = self.__auth_manager.get_all_locked_clients()
+            return make_json_response({"locked_clients": locked_clients})
+        return make_json_response({"enabled": False, "locked_clients": {}})
+
+    @exposed_http("POST", "/auth/unlock_client")
+    async def __unlock_client_handler(self, req: Request) -> Response:
+        if self.__auth_manager.is_auth_enabled():
+            data = await req.post()
+            client_ip = data.get("client_ip", "").strip()
+            if not client_ip:
+                return make_json_response({
+                    "error": "BadRequest",
+                    "error_msg": "Missing client_ip parameter"
+                }, status=400)
+
+            unlocked = self.__auth_manager.unlock_client(client_ip)
+            return make_json_response({
+                "unlocked": unlocked,
+                "client_ip": client_ip
+            })
+        return make_json_response({"enabled": False})
