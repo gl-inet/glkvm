@@ -104,7 +104,7 @@ class RedfishApi:
                     "ResetType@Redfish.AllowableValues": list(self.__actions),
                     "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset",
                 },
-                "
+                "#ComputerSystem.SetDefaultBootOrder": {
                     "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.SetDefaultBootOrder",
                 },
             },
