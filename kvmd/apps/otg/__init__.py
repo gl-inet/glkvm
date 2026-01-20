@@ -171,7 +171,7 @@ class _GadgetConfig:
         _mkdir(func_path)
         if start:
             _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, "RNDIS",esp)
+        self.__create_meta(func, "RNDIS", eps)
 
     def add_keyboard(self, start: bool, remote_wakeup: bool) -> None:
         self.__add_hid("Keyboard", start, remote_wakeup, make_keyboard_hid())
@@ -231,7 +231,7 @@ class _GadgetConfig:
 
         if start:
             self.__start_function(func, eps)
-        desc = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else f"Mass Storage Disk
+        desc = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else "Mass Storage Disk")
         self.__create_meta(func, desc, eps)
         self.__msd_instance += 1
 

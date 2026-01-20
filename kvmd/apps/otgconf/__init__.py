@@ -133,10 +133,10 @@ class _GadgetControl:
     def list_functions(self) -> None:
         funcs = list(self.__read_metas())
         eps_used = sum(func.eps for func in funcs if func.enabled)
-        print(f"
-        print(f"
+        print(f"Endpoints used: {eps_used}/{self.__eps}")
+        print(f"Available functions:")
         for func in funcs:
-            print(f"{'+' if func.enabled else '-'} {func.name}
+            print(f"{'+' if func.enabled else '-'} {func.name} ({func.eps} eps) - {func.desc}")
 
     def make_gpio_config(self) -> None:
         class Dumper(yaml.Dumper):
@@ -169,8 +169,7 @@ class _GadgetControl:
                 "pulse": False,
             }
             config["view"]["table"].append(InlineList([  # type: ignore
-                "
-                "
+                func.desc,
                 func.name,
             ]))
         print(yaml.dump({"kvmd": {"gpio": config}}, indent=4, Dumper=Dumper))
