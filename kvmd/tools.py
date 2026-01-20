@@ -90,6 +90,6 @@ def passwds_splitted(text: str) -> Generator[tuple[int, str], None, None]:
     for (lineno, line) in enumerate(text.split("\n")):
         line = line.rstrip("\r")
         ls = line.strip()
-        if len(ls) == 0 or ls.startswith("
+        if len(ls) == 0 or ls.startswith("#"):
             continue
         yield (lineno, line)
