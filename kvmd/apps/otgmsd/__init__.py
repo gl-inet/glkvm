@@ -96,8 +96,8 @@ def main(argv: (list[str] | None)=None) -> None:
         set_param("ro", str(int(not options.set_rw)))
 
     if options.set_image:
-
-
+        # if not os.path.isfile(options.set_image):
+        #     raise SystemExit(f"Not a file: {options.set_image}")
         set_param("file", options.set_image)
 
     print("Image file: ", (get_param("file") or "<none>"))

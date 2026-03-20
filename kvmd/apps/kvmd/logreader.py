@@ -48,7 +48,7 @@ class LogReader:
                 log_file.seek(0, 2)
                 file_size = log_file.tell()
                 log_file.seek(max(0, file_size - seek), 0)
-
+            
             while True:
                 line = log_file.readline()
                 if line:

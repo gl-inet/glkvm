@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import asyncio
@@ -38,18 +38,19 @@ from .types import AtxClickResetDelays
 from .proto import UnitState
 from .proto import UnitAtxLeds
 
-from .chain import Chain
+#from .chain import Chain
+from .sysfs_chain import Chain
 
 
-
+# =====
 @dataclasses.dataclass
 class _UnitInfo:
     state: (UnitState | None) = dataclasses.field(default=None)
     atx_leds: (UnitAtxLeds | None) = dataclasses.field(default=None)
 
 
-
-class StateCache:
+# =====
+class StateCache:  # pylint: disable=too-many-instance-attributes,too-many-public-methods
     __FW_VERSION = 8
 
     __FULL    = 0xFFFF
@@ -62,6 +63,7 @@ class StateCache:
     __ATX     = 0x40
 
     def __init__(self) -> None:
+        self.__chain = Chain()
         self.__edids = Edids()
         self.__dummies = Dummies({})
         self.__colors = Colors()
@@ -75,6 +77,7 @@ class StateCache:
         self.__synced = True
 
         self.__queue: "asyncio.Queue[int]" = asyncio.Queue()
+        self.__last_state: dict = {}
 
     def get_edids(self) -> Edids:
         return self.__edids.copy()
@@ -97,7 +100,7 @@ class StateCache:
     def get_atx_cr_delays(self) -> AtxClickResetDelays:
         return self.__atx_cr_delays.copy()
 
-
+    # =====
 
     def get_state(self) -> dict:
         return self.__inner_get_state(self.__FULL)
@@ -113,26 +116,31 @@ class StateCache:
             except TimeoutError:
                 mask = 0
 
+            mask = mask | self.__VIDEO | self.__USB | self.__SUMMARY
             if mask == self.__ATX:
-
+                # Откладываем единичное новое событие ATX, чтобы аккумулировать с нескольких свичей
                 if atx_ts == 0:
                     atx_ts = time.monotonic() + 0.2
                     continue
                 elif atx_ts >= time.monotonic():
                     continue
-
+                # ... Ну или разрешаем отправить, если оно уже достаточно мариновалось
             elif mask == 0 and atx_ts > time.monotonic():
-
+                # Разрешаем отправить отложенное
                 mask = self.__ATX
                 atx_ts = 0
             elif mask & self.__ATX:
-
+                # Комплексное событие всегда должно обрабатываться сразу
                 atx_ts = 0
 
             if mask != 0:
-                yield self.__inner_get_state(mask)
+                # yield self.__inner_get_state(mask)
+                new_state = self.__inner_get_state(mask)
+                if new_state != self.__last_state:
+                    self.__last_state = new_state
+                    yield new_state
 
-    def __inner_get_state(self, mask: int) -> dict:
+    def __inner_get_state(self, mask: int) -> dict:  # pylint: disable=too-many-branches,too-many-statements,too-many-locals
         assert mask != 0
         x_model = (mask == self.__FULL)
         x_summary = (mask & self.__SUMMARY)
@@ -162,18 +170,25 @@ class StateCache:
                     },
                 },
             }
+        # if x_summary:
+        #     state["summary"] = {
+        #         "active_port": self.__active_port,
+        #         "active_id": (
+        #             "" if self.__active_port < 0 else (
+        #                 f"{self.__active_port // 4 + 1}.{self.__active_port % 4 + 1}"
+        #                 if len(self.__units) > 1 else
+        #                 f"{self.__active_port + 1}"
+        #             )
+        #         ),
+        #         "synced": self.__synced,
+        #     }
         if x_summary:
+            self.__active_port = self.__chain.get_current_channel()
             state["summary"] = {
-                "active_port": self.__active_port,
-                "active_id": (
-                    "" if self.__active_port < 0 else (
-                        f"{self.__active_port // 4 + 1}.{self.__active_port % 4 + 1}"
-                        if len(self.__units) > 1 else
-                        f"{self.__active_port + 1}"
-                    )
-                ),
-                "synced": self.__synced,
-            }
+            "active_port": self.__active_port,
+            "active_id": f"1.{self.__active_port + 1}",
+            "synced": True,
+        }
         if x_edids:
             state["edids"] = {
                 "all": {
@@ -195,13 +210,34 @@ class StateCache:
                 for role in Colors.ROLES
             }
         if x_video:
-            state["video"] = {"links": []}
+            state["video"] = {"links": self.__chain.get_video_links()}
         if x_usb:
-            state["usb"] = {"links": []}
+            state["usb_otg"] = {"links": self.__chain.get_usb_otg_links()}
+            state["usb_host"] = self.__chain.get_usb_host_link()
         if x_beacons:
             state["beacons"] = {"uplinks": [], "downlinks": [], "ports": []}
         if x_atx:
             state["atx"] = {"busy": [], "leds": {"power": [], "hdd": []}}
+
+        # ===== 在 sysfs-only 场景下构造 ports =====
+        if x_model and not self.__units:
+            for ch in range(self.__chain.get_channel_count()):
+                state["model"]["ports"].append({
+                    "unit": 0,
+                    "channel": ch,
+                    "name": self.__port_names[ch],
+                    "id": f"1.{ch + 1}",
+                    "atx": {
+                        "click_delays": {
+                            "power": self.__atx_cp_delays[ch],
+                            "power_long": self.__atx_cpl_delays[ch],
+                            "reset": self.__atx_cr_delays[ch],
+                        },
+                    },
+                    "video": {
+                        "dummy": self.__dummies[ch],
+                    },
+                })
 
         if not self.__is_units_ready():
             return state
@@ -335,7 +371,7 @@ class StateCache:
         assert mask != 0
         self.__queue.put_nowait(mask)
 
-
+    # =====
 
     def set_edids(self, edids: Edids) -> None:
         changed = (

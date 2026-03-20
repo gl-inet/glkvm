@@ -30,14 +30,18 @@ async def ubus_call_async(service, method, args={}):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
-
+    
     stdout, stderr = await process.communicate()
-
+    
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
 
     encoding = chardet.detect(stdout)['encoding'] or 'utf-8'
-    decoded_output = stdout.decode(encoding, errors='replace')
+    # decoded_output = stdout.decode(encoding, errors='replace')
+    try:
+        decoded_output = stdout.decode(encoding)
+    except:
+        decoded_output = stdout.decode("utf-8", errors="replace")
 
     try:
         return json.loads(stdout)
@@ -50,7 +54,7 @@ class RepeaterApi:
     def __init__(self) -> None:
         self._logger = logger
         self.__need_update = False
-
+        # 读取model信息并更新URL
         try:
             with open(MODEL_PATH, "r") as f:
                 self.model = f.read().strip()
@@ -80,15 +84,15 @@ class RepeaterApi:
 
     @exposed_http("POST", "/repeater/connect")
     async def __connect_wifi_handler(self, req: Request) -> Response:
-
+        # 读取请求体中的JSON数据
         data = await req.json()
-
+        
         if not isinstance(data, dict):
             raise BadRequestError("Configuration data must be in JSON object format")
-
+        
         ssid = data.get("ssid")
         key = data.get("key")
-
+        
         try:
             if not ssid:
                 return make_json_exception(BadRequestError("Missing SSID"), 400)
@@ -116,14 +120,31 @@ class RepeaterApi:
             self._logger.error(f"Error executing repeater command: {e}")
             return make_json_exception(BadRequestError(f"Failed to disconnect wifi:{e}"), 502)
 
+    @exposed_http("POST", "/repeater/enable")
+    async def __enable_handler(self, req: Request) -> Response:
+        try:
+            enable = req.query.get("enable")
+            if enable == "true":
+                res = await ubus_call_async("repeater", "enable")
+            else:
+                res = await ubus_call_async("repeater", "disable")
+
+            if res["err_code"] != 0:
+                return make_json_response({"result": "failed"})
+
+            return make_json_response({"result": "success"})
+        except Exception as e:
+            self._logger.error(f"Error executing repeater command: {e}")
+            return make_json_exception(BadRequestError(f"Failed to enable wifi:{e}"), 502)
+
     @exposed_http("POST", "/repeater/remove_saved_ap")
     async def __forget_wifi_handler(self, req: Request) -> Response:
-
+        # 读取请求体中的JSON数据
         data = await req.json()
-
+        
         if not isinstance(data, dict):
             raise BadRequestError("Configuration data must be in JSON object format")
-
+        
         ssid = data.get("ssid")
 
         try:
@@ -152,9 +173,9 @@ class RepeaterApi:
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
         """轮询Repeater状态并在状态变化时生成事件"""
-        if self.model == "rm1":
+        if self.model == "rm1" or self.model == "rm1pe" or self.model == "rm1v2":
             while True:
-                await sleep(3)
+                await sleep(3)  # 每秒检查一次
         else:
             old_res = {}
             while True:
@@ -168,8 +189,8 @@ class RepeaterApi:
                         self.__need_update = False
                 except Exception as e:
                     self._logger.error(f"repeater service not found: {e}")
-                await sleep(3)
-
-
+                await sleep(3)  # 每秒检查一次
+            
+        
     async def trigger_state(self) -> None:
         self.__need_update = True

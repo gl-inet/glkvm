@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2020  Maxim Devaev <mdevaev@gmail.com>                    #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import asyncio
@@ -35,7 +35,7 @@ from ... import aiotools
 from .hid import Hid
 
 
-
+# =====
 def _udev_check(device: pyudev.Device) -> str:
     props = device.properties
     if props.get("ID_INPUT") == "1":
@@ -142,7 +142,7 @@ class MultiHid:
                 self.__workers[path].hid = hid
                 await hid.poll_to_queue(self.__queue)
             except Exception as ex:
-                if isinstance(ex, OSError) and ex.errno == errno.ENODEV:
+                if isinstance(ex, OSError) and ex.errno == errno.ENODEV:  # pylint: disable=no-member
                     logger.info("Closed: %s", hid)
                     break
                 logger.exception("Unhandled exception while polling %s", hid)

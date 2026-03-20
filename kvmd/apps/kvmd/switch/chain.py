@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import multiprocessing
@@ -45,7 +45,7 @@ from .device import Device
 from .device import DeviceError
 
 
-
+# =====
 class _BaseCmd:
     pass
 
@@ -136,7 +136,7 @@ class _UnitContext:
             and self.changing_rid < 0
         )
 
-
+    # =====
 
     @property
     def changing_rid(self) -> int:
@@ -150,15 +150,15 @@ class _UnitContext:
         self.__rid = rid
         self.__deadline_ts = ((time.monotonic() + self.__TIMEOUT) if rid >= 0 else -1)
 
+    # =====
 
-
-    def is_atx_allowed(self, ch: int) -> tuple[bool, bool]:
+    def is_atx_allowed(self, ch: int) -> tuple[bool, bool]:  # (allowed, power_led)
         if self.state is None or self.atx_leds is None:
             return (False, False)
         return ((not self.state.atx_busy[ch]), self.atx_leds.power[ch])
 
 
-
+# =====
 class BaseEvent:
     pass
 
@@ -189,8 +189,8 @@ class UnitAtxLedsEvent(BaseEvent):
     atx_leds: UnitAtxLeds
 
 
-
-class Chain:
+# =====
+class Chain:  # pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         device_path: str,
@@ -215,10 +215,10 @@ class Chain:
         self.__stop_event = multiprocessing.Event()
 
     def set_actual(self, actual: bool) -> None:
-
+        # Флаг разрешения синхронизации EDID и прочих чувствительных вещей
         self.__queue_cmd(_CmdSetActual(actual))
 
-
+    # =====
 
     def translate_port(self, port: float) -> int:
         assert port >= 0
@@ -230,7 +230,7 @@ class Chain:
         port = min((unit - 1) * 4 + (ch - 1), 19)
         return port
 
-
+    # =====
 
     def set_active_prev(self) -> None:
         self.__queue_cmd(_CmdSetActivePrev())
@@ -241,7 +241,7 @@ class Chain:
     def set_active_port(self, port: int) -> None:
         self.__queue_cmd(_CmdSetActivePort(port))
 
-
+    # =====
 
     def set_port_beacon(self, port: int, on: bool) -> None:
         self.__queue_cmd(_CmdSetPortBeacon(port, on))
@@ -252,10 +252,10 @@ class Chain:
     def set_downlink_beacon(self, unit: int, on: bool) -> None:
         self.__queue_cmd(_CmdSetUnitBeacon(unit, on, downlink=True))
 
-
+    # =====
 
     def set_edids(self, edids: Edids) -> None:
-        self.__queue_cmd(_CmdSetEdids(edids))
+        self.__queue_cmd(_CmdSetEdids(edids))  # Will be copied because of multiprocessing.Queue()
 
     def set_dummies(self, dummies: Dummies) -> None:
         self.__queue_cmd(_CmdSetDummies(dummies))
@@ -263,7 +263,7 @@ class Chain:
     def set_colors(self, colors: Colors) -> None:
         self.__queue_cmd(_CmdSetColors(colors))
 
-
+    # =====
 
     def click_power(self, port: int, delay: float, if_powered: (bool | None)) -> None:
         self.__queue_cmd(_CmdAtxClick(port, delay, reset=False, if_powered=if_powered))
@@ -271,12 +271,12 @@ class Chain:
     def click_reset(self, port: int, delay: float, if_powered: (bool | None)) -> None:
         self.__queue_cmd(_CmdAtxClick(port, delay, reset=True, if_powered=if_powered))
 
-
+    # =====
 
     def reboot_unit(self, unit: int, bootloader: bool) -> None:
         self.__queue_cmd(_CmdRebootUnit(unit, bootloader))
 
-
+    # =====
 
     async def poll_events(self) -> AsyncGenerator[BaseEvent, None]:
         proc = multiprocessing.Process(target=self.__subprocess, daemon=True)
@@ -293,7 +293,7 @@ class Chain:
             if proc.is_alive() or proc.exitcode is not None:
                 await aiotools.run_async(proc.join)
 
-
+    # =====
 
     def __queue_cmd(self, cmd: _BaseCmd) -> None:
         if not self.__stop_event.is_set():
@@ -344,7 +344,7 @@ class Chain:
         try:
             return bool(select.select([
                 self.__device.get_fd(),
-                self.__cmd_queue._reader,
+                self.__cmd_queue._reader,  # type: ignore  # pylint: disable=protected-access
             ], [], [], 1)[0])
         except Exception as ex:
             raise DeviceError(ex)
@@ -375,7 +375,7 @@ class Chain:
                         self.__queue_event(PortActivatedEvent(self.__active_port))
 
                 case _CmdSetActivePort():
-
+                    # Может быть вызвано изнутри при синхронизации
                     if cmd.port < len(self.__units) * 4:
                         self.__active_port = cmd.port
                         self.__queue_event(PortActivatedEvent(self.__active_port))
@@ -441,7 +441,7 @@ class Chain:
         if self.__active_port < 0:
             for (unit, ctx) in enumerate(self.__units):
                 if ctx.state is not None and ctx.state.ch < 4:
-
+                    # Trigger queue select()
                     port = self.get_virtual_port(unit, ctx.state.ch)
                     get_logger().info("Found an active port %d on [%d:%d]: Syncing ...",
                                       port, unit, ctx.state.ch)
@@ -452,7 +452,7 @@ class Chain:
         if self.__units[resp.header.unit].changing_rid == resp.header.rid:
             self.__units[resp.header.unit].changing_rid = -1
 
-
+    # =====
 
     def __ensure_config(self) -> None:
         for (unit, ctx) in enumerate(self.__units):
@@ -485,7 +485,7 @@ class Chain:
                                       ctx.state.video_crc[ch], ctx.state.video_edid[ch],
                                       edid.crc, edid.valid, edid.name)
                     ctx.changing_rid = self.__device.request_set_edid(unit, ch, edid)
-                    break
+                    break  # Busy globally
 
     def __ensure_config_dummies(self, unit: int, ctx: _UnitContext) -> None:
         assert ctx.state is not None
@@ -498,18 +498,18 @@ class Chain:
                                       port, unit, ch,
                                       ctx.state.video_dummies[ch], dummy)
                     ctx.changing_rid = self.__device.request_set_dummy(unit, ch, dummy)
-                    break
+                    break  # Busy globally (actually not but it can be changed in the firmware)
 
     def __ensure_config_colors(self, unit: int, ctx: _UnitContext) -> None:
         assert self.__actual
         assert ctx.state is not None
         for np in range(6):
             if self.__colors.crc != ctx.state.np_crc[np]:
-
-
+                # get_logger().info("Changing colors on NP [%d:%d]: %d -> %d ...",
+                #                   unit, np, ctx.state.np_crc[np], self.__colors.crc)
                 self.__device.request_set_colors(unit, np, self.__colors)
 
-
+    # =====
 
     @classmethod
     def get_real_unit_channel(cls, port: int) -> tuple[int, int]:

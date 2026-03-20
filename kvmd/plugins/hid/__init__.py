@@ -48,7 +48,7 @@ from .. import get_plugin_class
 
 
 # =====
-class BaseHid(BasePlugin):
+class BaseHid(BasePlugin):  # pylint: disable=too-many-instance-attributes
     def __init__(
         self,
         ignore_keys: list[str],
@@ -107,18 +107,18 @@ class BaseHid(BasePlugin):
         raise NotImplementedError
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
-
-
-
-
-
-
-
-
+        # ==== Granularity table ====
+        #   - enabled   -- Full
+        #   - online    -- Partial
+        #   - busy      -- Partial
+        #   - connected -- Partial, nullable
+        #   - keyboard.online  -- Partial
+        #   - keyboard.outputs -- Partial
+        #   - keyboard.leds    -- Partial
+        #   - mouse.online     -- Partial
+        #   - mouse.outputs    -- Partial, follows with absolute
+        #   - mouse.absolute   -- Partial, follows with outputs
+        # ===========================
 
         yield {}
         raise NotImplementedError
@@ -159,15 +159,15 @@ class BaseHid(BasePlugin):
     def send_key_event(self, key: int, state: bool, finish: bool) -> None:
         self._send_key_event(key, state)
         if state and finish and (key not in EvdevModifiers.ALL and key != ecodes.KEY_SYSRQ):
-
-
+            # Считаем что PrintScreen это модификатор для Alt+SysRq+...
+            # По-хорошему надо учитывать факт нажатия на Alt, но можно и забить.
             self._send_key_event(key, False)
         self.__bump_activity()
 
     def _send_key_event(self, key: int, state: bool) -> None:
         raise NotImplementedError
 
-
+    # =====
 
     def send_mouse_button_event(self, button: int, state: bool) -> None:
         self._send_mouse_button_event(button, state)
@@ -176,7 +176,7 @@ class BaseHid(BasePlugin):
     def _send_mouse_button_event(self, button: int, state: bool) -> None:
         raise NotImplementedError
 
-
+    # =====
 
     def send_mouse_move_event(self, to_x: int, to_y: int) -> None:
         self.__j_last_x = to_x
@@ -189,10 +189,10 @@ class BaseHid(BasePlugin):
         self.__bump_activity()
 
     def _send_mouse_move_event(self, to_x: int, to_y: int) -> None:
-        _ = to_x
+        _ = to_x  # XXX: NotImplementedError
         _ = to_y
 
-
+    # =====
 
     def send_mouse_relative_events(self, deltas: Iterable[tuple[int, int]], squash: bool) -> None:
         self.__process_mouse_delta_event(deltas, squash, self.send_mouse_relative_event)
@@ -202,10 +202,10 @@ class BaseHid(BasePlugin):
         self.__bump_activity()
 
     def _send_mouse_relative_event(self, delta_x: int, delta_y: int) -> None:
-        _ = delta_x
+        _ = delta_x  # XXX: NotImplementedError
         _ = delta_y
 
-
+    # =====
 
     def send_mouse_wheel_events(self, deltas: Iterable[tuple[int, int]], squash: bool) -> None:
         self.__process_mouse_delta_event(deltas, squash, self.send_mouse_wheel_event)
@@ -217,10 +217,10 @@ class BaseHid(BasePlugin):
     def _send_mouse_wheel_event(self, delta_x: int, delta_y: int) -> None:
         raise NotImplementedError
 
-
+    # =====
 
     def clear_events(self) -> None:
-        self._clear_events()
+        self._clear_events()  # Don't bump activity here
 
     def _clear_events(self) -> None:
         raise NotImplementedError
@@ -267,7 +267,7 @@ class BaseHid(BasePlugin):
             },
         }
 
-
+    # =====
 
     async def systask(self) -> None:
         while True:

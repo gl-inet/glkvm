@@ -2,38 +2,52 @@ mixin about_tab(name, title, checked=false)
 	- let button_id = `about-tab-${name}-button`
 	input(checked=checked type="radio" name="about-tab-button", id=button_id)
 	label(for=button_id) #{title}
-	div(class="tab")
-		div(id=`about-${name}` class="code")
+	.tab
+		.code(id=`about-${name}`)
 			if block
 				block
 			else
-				span(class="code-comment") No data
+				span.code-comment No data
 
-div(id="about-window" class="window")
-	div(class="window-header")
-		div(class="window-grab") About
-		button(class="window-button-close") #[b &times;]
 
-	div(id="about")
+.window#about-window(data-show-centered)
+	.window-header
+		.window-grab About
+		.window-buttons
+			button.window-button-original &bull;
+			button.window-button-close #[b &times;]
+
+	#about
 		table
 			tr
-				td(class="logo")
+				td.logo
 					a(href="https://pikvm.org" target="_blank")
-						img(class="svg-gray" src=`${svg_dir}/logo.svg` alt="PiKVM" height="40")
+						img.svg-gray(src=`${svg_dir}/logo.svg` alt="PiKVM" height="40")
 				td
 					table
-						tr #[td(colspan="2" class="title") The Open Source KVM over IP]
 						tr
-							td(colspan="2" class="copyright")
+							td.title(colspan="2")
+								| The Open Source KVM over IP
+						tr
+							td.copyright(colspan="2")
 								| Copyright &copy; 2018-2024 #[a(target="_blank" href="mailto:mdevaev@gmail.com") Maxim Devaev]
 		br
-		div(class="tabs-box")
-			+about_tab("meta", "Meta", true)
+		.tabs-box
+			+about_tab("version", "Version", true)
 			+about_tab("hardware", "Hardware")
-			+about_tab("version", "Version")
+
+			+about_tab("meta", "Meta")
+				div
+					span.code-comment
+						| // You can get this JSON using handle
+						| #[a(target="_blank" href=`${root_prefix}api/info?fields=meta`) /api/info?fields=meta]#[br]
+						| // In the standard configuration this data#[br]
+						| // is specified in the file /etc/kvmd/meta.yaml
+					br
+					pre#kvmd-meta-json No data
 
 			+about_tab("thanks", "Thanks")
-				span(class="code-comment")
+				span.code-comment
 					| // These kind people donated money to the PiKVM project#[br]
 					| // and supported the work on it. We are very grateful#[br]
 					| // for their help, and memorializing their names#[br]
@@ -71,6 +85,7 @@ div(id="about-window" class="window")
 					li Alok Anand
 					li Alucard
 					li Ananthaneshan Elampoornan
+					li Andreas Grundler
 					li Andreas Marufke
 					li Andreas Schmid
 					li Andrew Brant
@@ -131,6 +146,7 @@ div(id="about-window" class="window")
 					li Brian T Mulcahy
 					li Brian Vecchiarelli
 					li Brian White
+					li brodonalds
 					li Bruno Gomes
 					li Bryan Adams
 					li Bryan Montgomery
@@ -467,6 +483,7 @@ div(id="about-window" class="window")
 					li Mikael Wikström
 					li Mike Mason
 					li Mikhael Mariano
+					li Milan Burda
 					li Milan Múčka
 					li Miles Davis
 					li Minh Tang
@@ -485,6 +502,7 @@ div(id="about-window" class="window")
 					li Nick Roethemeier
 					li Nico Baumgartner
 					li Nicolai Kragh-Hansen
+					li Nicolas Christener
 					li Nigel Smith
 					li Nihal Fernando
 					li Nils Orbat
@@ -492,6 +510,7 @@ div(id="about-window" class="window")
 					li Nithin Philips
 					li Nod Swal
 					li Nolan Haynes
+					li Noxigen LLC
 					li nubbn
 					li nybble
 					li Oh Be
@@ -576,6 +595,7 @@ div(id="about-window" class="window")
 					li Scuba
 					li Sean
 					li Sean Akers
+					li Sean c Rickard
 					li SEAT
 					li Sebastian
 					li Seonwoo Lee
@@ -644,6 +664,7 @@ div(id="about-window" class="window")
 					li Udo Schroeter
 					li Uli Fahrer
 					li Vasily Lazarev
+					li Venmo
 					li Vidru Eduard
 					li Vicente Salvador Cubedo
 					li Viktor Aschenbrenner
@@ -674,7 +695,7 @@ div(id="about-window" class="window")
 					li Zoltan Magyari
 					li Zsombor Vari
 		br
-		p(class="text credits")
+		p.text.credits
 			a(target="_blank" href="https://pikvm.org") PiKVM Project
 			| &nbsp; | &nbsp;
 			a(target="_blank" href="https://docs.pikvm.org") Documentation

@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 
@@ -40,8 +40,10 @@ from ....htserver import (
     make_json_exception,
 )
 from ....logging import get_logger
+from ....utils import get_model_name
 
 logger = get_logger()
+model_name = get_model_name()
 
 class FingerbotApi:
     _device_path = "/sys/class/bluetooth/hci0"
@@ -54,14 +56,15 @@ class FingerbotApi:
     HIGH_ANGLE_PUSH_TIME = 1000
     HIGH_ANGLE_PULL_TIME = HIGH_ANGLE_PUSH_TIME + PULL_TIME_OFFSET
     angle_enum_dict = {
-
+        # angle_enum: (push_time, pull_time)
         1: (LOW_ANGLE_PUSH_TIME, LOW_ANGLE_PULL_TIME),
         2: (HIGH_ANGLE_PUSH_TIME, HIGH_ANGLE_PULL_TIME)
     }
     __need_update = False
-
+    
     def __init__(self) -> None:
         self._logger = logger
+        self._model_name = model_name
         self._battery_cache: Optional[int] = None
         self._version_cache: Optional[str] = None
 
@@ -106,32 +109,36 @@ class FingerbotApi:
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
         """轮询蓝牙设备状态并在状态变化时生成事件"""
-        prev_exist = None
-        while True:
-            FingerbotApi._device_path = self.get_dongle_hci_path(self.DEVICE_NAME)
-            if FingerbotApi._device_path:
-                exist = os.path.exists(FingerbotApi._device_path)
-            else:
-                exist = False
-            if self.__need_update or prev_exist != exist:
-                yield {"exist": exist}
-                prev_exist = exist
-                self.__need_update = False
-
-                if exist:
-                    self._logger.info("Fingerbot device connected, reading battery and version info")
-                    await sleep(1)
-                    await self._read_version()
-                    await self._read_battery()
-            await sleep(3)
-
+        if self._model_name == "rmq1":
+            while True:
+                await sleep(3)  # 每秒检查一次
+        else:
+            prev_exist = None
+            while True:
+                FingerbotApi._device_path = self.get_dongle_hci_path(self.DEVICE_NAME)
+                if FingerbotApi._device_path:
+                    exist = os.path.exists(FingerbotApi._device_path)
+                else:
+                    exist = False
+                if self.__need_update or prev_exist != exist:
+                    yield {"exist": exist}
+                    prev_exist = exist
+                    self.__need_update = False
+                    # 当设备刚刚连接上时（exist变为True），读取电池电量和版本信息
+                    if exist:
+                        self._logger.info("Fingerbot device connected, reading battery and version info")
+                        await sleep(1)
+                        await self._read_version()
+                        await self._read_battery()
+                await sleep(3)  # 每3秒检查一次
+    
     async def trigger_state(self) -> None:
         self.__need_update = True
 
     @staticmethod
     def _is_press_time_valid(press_time: int) -> bool:
         return FingerbotApi.MIN_PRESS_TIME <= press_time <= FingerbotApi.MAX_PRESS_TIME
-
+    
     @staticmethod
     def _is_angle_enum_valid(angle_enum: int) -> bool:
         return angle_enum in FingerbotApi.angle_enum_dict
@@ -165,11 +172,11 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
                 self._logger.error(f"Fingerbot read command failed: {stderr.decode()}")
                 return None
-
+                
             battery_level = self._parse_battery_from_output(stdout.decode())
             if battery_level is not None:
                 self._battery_cache = battery_level
@@ -187,11 +194,11 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
-
+                # self._logger.error(f"Fingerbot image-list command failed: {stderr.decode()}")
                 return None
-
+            
             local_version = self._parse_version_from_output(stdout.decode())
             if local_version is not None:
                 self._version_cache = local_version
@@ -202,7 +209,7 @@ class FingerbotApi:
 
     @exposed_http("GET", "/fingerbot/battery")
     async def _battery_handler(self, _: Request) -> Response:
-
+        # if self._battery_cache is None:
         battery_level = await self._read_battery()
         if battery_level is None:
             return make_json_exception(BadRequestError("Failed to read battery"), 502)
@@ -229,7 +236,7 @@ class FingerbotApi:
 
         if not self._is_press_time_valid(press_time):
             return make_json_exception(BadRequestError("press time is not in range"), 400)
-
+        
         if not self._is_angle_enum_valid(angle_enum):
             return make_json_exception(BadRequestError("angle_enum is not a number or not in range"), 400)
 
@@ -246,12 +253,12 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
                 self._logger.error(f"Fingerbot failed to click: {stderr.decode()}")
                 return make_json_exception(BadRequestError(f"Failed to click"), 502)
 
-
+            # Update battery cache after click
             await self._read_battery()
             return make_json_response({"result": "success"})
         except Exception as e:
@@ -279,12 +286,12 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
                 self._logger.error(f"Fingerbot failed to push: {stderr.decode()}")
                 return make_json_exception(BadRequestError(f"Failed to push"), 502)
 
-
+            # Update battery cache after push
             await self._read_battery()
             return make_json_response({"result": "success"})
 
@@ -297,7 +304,7 @@ class FingerbotApi:
         angle_enum = int(request.query.get("angle_enum", ""))
         if not self._is_angle_enum_valid(angle_enum):
             return make_json_exception(BadRequestError("angle_enum is not a number or not in range"), 400)
-
+  
         push_time, pull_time = FingerbotApi.angle_enum_dict[angle_enum]
         press_time = 0
         push_time = 0
@@ -313,12 +320,12 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
                 self._logger.error(f"Fingerbot failed to pull: {stderr.decode()}")
                 return make_json_exception(BadRequestError(f"Failed to pull"), 502)
 
-
+            # Update battery cache after pull
             await self._read_battery()
             return make_json_response({"result": "success"})
 
@@ -331,14 +338,14 @@ class FingerbotApi:
         try:
             reader = await request.multipart()
             field = await reader.next()
-
+            
             if field is None or field.name != "file":
                 return make_json_exception(BadRequestError("No file uploaded or invalid field name"), 400)
-
+            
             filename = field.filename
             size = 0
 
-
+            # 检查上传文件是否为 zip 文件
             if not filename.endswith(".zip"):
                 return make_json_exception(BadRequestError("Only .zip files are allowed"), 400)
 
@@ -350,7 +357,7 @@ class FingerbotApi:
                         break
                     size += len(chunk)
                     f.write(chunk)
-
+            
             try:
                 extract_dir = "/tmp/fgb_image/"
                 if os.path.exists(extract_dir):
@@ -364,7 +371,7 @@ class FingerbotApi:
 
                 with open(manifest_path, "r") as manifest_file:
                     manifest_data = json.load(manifest_file)
-
+                
                 expected_soc = "nrf54l15"
                 expected_size = None
                 found_soc = None
@@ -374,23 +381,23 @@ class FingerbotApi:
                         found_soc = file_entry.get("soc")
                         break
 
-
+                # check soc and size
                 if expected_size is None:
                     return make_json_exception(BadRequestError("finger_robot.signed.bin not listed in manifest.json"), 400)
-
+                
                 if found_soc is None or found_soc != expected_soc:
                     return make_json_exception(BadRequestError(f"Invalid SOC: expected '{expected_soc}', got '{found_soc}'"), 400)
-
-
+            
+                # check exist of firmware file
                 bin_file_path = os.path.join(extract_dir, "finger_robot.signed.bin")
                 if not os.path.exists(bin_file_path):
                     return make_json_exception(BadRequestError("finger_robot.signed.bin not found in zip archive"), 400)
 
-
+                # check firmware file size
                 actual_size = os.path.getsize(bin_file_path)
                 if actual_size != expected_size:
                     return make_json_exception(BadRequestError(f"File size mismatch: expected {expected_size}, got {actual_size}"), 400)
-
+            
             except:
                 return make_json_exception(BadRequestError("No file uploaded or invalid field name"), 400)
 
@@ -399,7 +406,7 @@ class FingerbotApi:
                 "size": size,
                 "result": "success"
             })
-
+            
         except Exception as e:
             self._logger.error(f"Error in upload process: {e}")
             return make_json_exception(BadRequestError(f"Failed to upload firmware:{e}"), 502)
@@ -418,15 +425,15 @@ class FingerbotApi:
                 stderr=subprocess.PIPE
             )
             stdout, stderr = await process.communicate()
-
+            
             if process.returncode != 0:
                 error = process.stderr.strip() if process.stderr else "Unknown error"
                 get_logger(0).error(f"stdout: {process.stdout}")
                 return make_json_exception(BadGatewayError("Failed to upgrade firmware"), 502)
-
-
+                
+            
             return make_json_response({"result": "success"})
-
+            
         except Exception as e:
             self._logger.error(f"Error in upgrade process: {e}")
             return make_json_exception(BadGatewayError("Failed to upgrade firmware"), 502)

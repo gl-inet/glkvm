@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import os
@@ -29,7 +29,7 @@ from typing import IO
 from typing import Generator
 
 
-
+# =====
 class EdidNoBlockError(Exception):
     pass
 
@@ -78,7 +78,7 @@ _CEA_SPEAKERS = 4
 
 
 class Edid:
-
+    # https://en.wikipedia.org/wiki/Extended_Display_Identification_Data
 
     def __init__(self, data: bytes) -> None:
         assert len(data) in [_SHORT, _LONG], f"Invalid EDID length: {len(data)}, should be {_SHORT} or {_LONG} bytes"
@@ -126,7 +126,7 @@ class Edid:
         if self.__long:
             self.__data[255] = 256 - (sum(self.__data[128:255]) % 256)
 
-
+    # =====
 
     def get_mfc_id(self) -> str:
         raw = self.__data[8] << 8 | self.__data[9]
@@ -149,7 +149,7 @@ class Edid:
         self.__data[8] = (raw >> 8) & 0xFF
         self.__data[9] = raw & 0xFF
 
-
+    # =====
 
     def get_product_id(self) -> int:
         return (self.__data[10] | self.__data[11] << 8)
@@ -159,7 +159,7 @@ class Edid:
         self.__data[10] = product_id & 0xFF
         self.__data[11] = (product_id >> 8) & 0xFF
 
-
+    # =====
 
     def get_serial(self) -> int:
         return (
@@ -176,7 +176,7 @@ class Edid:
         self.__data[14] = (serial >> 16) & 0xFF
         self.__data[15] = (serial >> 24) & 0xFF
 
-
+    # =====
 
     def get_monitor_name(self) -> str:
         return self.__get_dtd_text(0xFC, "Monitor Name")
@@ -206,7 +206,7 @@ class Edid:
                 return index + 5
         raise EdidNoBlockError(f"Can't find DTD {name}")
 
-
+    # ===== CEA =====
 
     def get_audio(self) -> bool:
         (cbs, _) = self.__parse_cea()
@@ -235,7 +235,7 @@ class Edid:
         if enabled:
             self.__data[_CEA + 3] |= 0b01000000
         else:
-            self.__data[_CEA + 3] &= (0xFF - 0b01000000)
+            self.__data[_CEA + 3] &= (0xFF - 0b01000000)  # ~X
 
     def __parse_cea(self) -> tuple[list[_CeaBlock], bytes]:
         if not self.__long:

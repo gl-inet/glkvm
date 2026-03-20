@@ -37,8 +37,8 @@ class MsdDriveLockedError(MsdOperationError):
 # =====
 class Drive:
     def __init__(self, gadget: str, instance: int, lun: int) -> None:
-        func = f"mass_storage.{instance}"
-
+        func = f"mass_storage.{instance}" # 现在不叫usb0,usb1了
+        # TODO:需要用脚本来控制mass_storage的挂载与取消
         self.__profile_func_path = usb.get_gadget_path(gadget, usb.G_PROFILE, func)
         self.__profile_path = usb.get_gadget_path(gadget, usb.G_PROFILE)
         self.__lun_path = usb.get_gadget_path(gadget, usb.G_FUNCTIONS, func, f"lun.{lun}")
@@ -55,9 +55,9 @@ class Drive:
         if path:
             self.__set_param("file", path)
         else:
-
+            # 现在我们的内核适配了forced_eject
             self.__set_param("forced_eject", "")
-            self.__set_param("file", "")
+            self.__set_param("file", "") 
 
     def get_image_path(self) -> str:
         path = self.__get_param("file")
@@ -67,23 +67,32 @@ class Drive:
         self.__set_param("cdrom", str(int(flag)))
 
     def get_cdrom_flag(self) -> bool:
-        return bool(int(self.__get_param("cdrom")))
+        value = self.__get_param("cdrom")
+        return bool(int(value)) if value else False
 
     def set_rw_flag(self, flag: bool) -> None:
         self.__set_param("ro", str(int(not flag)))
 
     def get_rw_flag(self) -> bool:
-        return (not int(self.__get_param("ro")))
+        value = self.__get_param("ro")
+        return (not int(value)) if value else False
 
     # =====
 
     def __get_param(self, param: str) -> str:
-        with open(os.path.join(self.__lun_path, param)) as file:
+        path = os.path.join(self.__lun_path, param)
+        if not os.path.exists(path):
+            return ""
+        with open(path) as file:
             return file.read().strip()
 
     def __set_param(self, param: str, value: str) -> None:
+        path = os.path.join(self.__lun_path, param)
+        if not os.path.exists(path):
+            get_logger(0).warning("MSD drive param path missing: %s; ignoring set(%s=%r)", path, param, value)
+            return
         try:
-            with open(os.path.join(self.__lun_path, param), "w") as file:
+            with open(path, "w") as file:
                 file.write(value + "\n")
         except OSError as ex:
             if ex.errno == errno.EBUSY:

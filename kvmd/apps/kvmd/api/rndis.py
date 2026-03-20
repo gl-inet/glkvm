@@ -18,9 +18,9 @@ from ....htserver import make_json_response
 from ....htserver import exposed_http
 
 
-
+# ====
 class RndisApi:
-    def __init__(self):
+    def __init__(self):  # type: ignore
         self.running = False
         return
 

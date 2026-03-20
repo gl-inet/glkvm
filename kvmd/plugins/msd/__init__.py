@@ -91,6 +91,16 @@ class MsdNoSpaceError(MsdOperationError):
         super().__init__("storage space is insufficient")
 
 
+class MsdImageInUseError(MsdOperationError):
+    def __init__(self) -> None:
+        super().__init__("Cannot remove image that is currently mounted")
+
+
+class MsdDisabledError(MsdOperationError):
+    def __init__(self) -> None:
+        super().__init__("MSD is disabled")
+
+
 # =====
 class BaseMsdReader:
     def get_state(self) -> dict:
@@ -120,6 +130,9 @@ class BaseMsdWriter:
 
 
 class BaseMsd(BasePlugin):
+    async def set_enabled(self, enabled: bool) -> None:
+        raise NotImplementedError()
+
     async def get_state(self) -> dict:
         raise NotImplementedError()
 
@@ -127,17 +140,17 @@ class BaseMsd(BasePlugin):
         raise NotImplementedError()
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
-
-
-
-
-
-
-
+        # ==== Granularity table ====
+        #   - enabled -- Full
+        #   - online  -- Partial
+        #   - busy    -- Partial
+        #   - drive   -- Partial, nullable
+        #   - storage -- Partial, nullable
+        #   - storage.parts       -- Partial
+        #   - storage.images      -- Partial
+        #   - storage.downloading -- Partial, nullable
+        #   - storage.uploading   -- Partial, nullable
+        # ===========================
 
         if self is not None:  # XXX: Vulture and pylint hack
             raise NotImplementedError()
@@ -282,13 +295,13 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
         assert self.__file is not None
 
         try:
-            await self.__file.write(chunk)
+            await self.__file.write(chunk)  # type: ignore
             self.__written += len(chunk)
 
             self.__unsynced += len(chunk)
             if self.__unsynced >= self.__sync_size:
-
-
+                # 删掉sync因为会大大降低文件传输速度
+                # await self.__sync()
                 self.__unsynced = 0
 
             now = time.monotonic()
@@ -298,7 +311,7 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
 
             return self.__written
         except OSError as e:
-            if e.errno == errno.ENOSPC:
+            if e.errno == errno.ENOSPC:  # No space left on device
                 raise MsdNoSpaceError()
             raise
 
@@ -307,10 +320,10 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
         get_logger(1).info("Writing %r image (%d bytes) to MSD ...", self.__name, self.__file_size)
         await aiofiles.os.makedirs(os.path.dirname(self.__path), exist_ok=True)
         self.__file = await aiofiles.open(self.__path, mode="w+b", buffering=0)  # type: ignore
-
-
-
-
+        # 好他妈坑啊, 这个代码在给上传的文件预分配磁盘空间,但是磁盘写入一个文件的速度可能是很慢的
+        # 如果磁盘写入速度很慢,那么这个代码会阻塞很久,导致上传失败
+        # 所以这里不预分配磁盘空间了
+        # await aiotools.run_async(os.ftruncate, self.__file.fileno(), self.__file_size)  # type: ignore
         return self
 
     async def finish(self) -> bool:
@@ -329,7 +342,7 @@ class MsdFileWriter(BaseMsdWriter):  # pylint: disable=too-many-instance-attribu
             else:  # written > size
                 (log, result) = (logger.warning, "OVERFLOW")
             log("Written %d of %d bytes to MSD image %r: %s", self.__written, self.__file_size, self.__name, result)
-            await self.__file.close()
+            await self.__file.close()  # type: ignore
         except Exception:
             logger.exception("Can't close image writer")
 

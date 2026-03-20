@@ -134,16 +134,16 @@ class Ocr:
         self.__notifier.notify()
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
+        # ===== Granularity table =====
+        #   - enabled -- Full
+        #   - langs   -- Partial
+        # =============================
 
         while True:
             await self.__notifier.wait()
             yield (await self.get_state())
 
-
+    # =====
 
     def get_default_langs(self) -> list[str]:
         return list(self.__default_langs)

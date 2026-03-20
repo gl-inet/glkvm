@@ -271,14 +271,14 @@ class UserGpio:
         self.__notifier.notify(1)
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
-
+        # ==== Granularity table ====
+        #   - model -- Full
+        #   - state.inputs  -- Partial
+        #   - state.outputs -- Partial
+        # ===========================
 
         prev: dict = {"inputs": {}, "outputs": {}}
-        while True:
+        while True:  # pylint: disable=too-many-nested-blocks
             if (await self.__notifier.wait()) > 0:
                 full = await self.get_state()
                 prev = copy.deepcopy(full["state"])
@@ -360,7 +360,7 @@ class UserGpio:
             },
         }
 
-
+    # =====
 
     def __make_view(self, view: dict) -> dict:
         return {

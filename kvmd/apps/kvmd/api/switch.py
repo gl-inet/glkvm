@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 from aiohttp.web import Request
@@ -42,12 +42,12 @@ from ..switch import Switch
 from ..switch import Colors
 
 
-
+# =====
 class SwitchApi:
     def __init__(self, switch: Switch) -> None:
         self.__switch = switch
 
-
+    # =====
 
     @exposed_http("GET", "/switch")
     async def __state_handler(self, _: Request) -> Response:
@@ -78,7 +78,7 @@ class SwitchApi:
         elif "uplink" in req.query:
             unit = valid_int_f0(req.query.get("uplink"))
             await self.__switch.set_uplink_beacon(unit, on)
-        else:
+        else:  # Downlink
             unit = valid_int_f0(req.query.get("downlink"))
             await self.__switch.set_downlink_beacon(unit, on)
         return make_json_response()
@@ -98,7 +98,7 @@ class SwitchApi:
             ]
             if req.query.get(param) is not None
         }
-        await self.__switch.set_port_params(port, **params)
+        await self.__switch.set_port_params(port, **params)  # type: ignore
         return make_json_response()
 
     @exposed_http("POST", "/switch/set_colors")
@@ -111,7 +111,7 @@ class SwitchApi:
         await self.__switch.set_colors(**params)
         return make_json_response()
 
-
+    # =====
 
     @exposed_http("POST", "/switch/reset")
     async def __reset(self, req: Request) -> Response:
@@ -120,7 +120,7 @@ class SwitchApi:
         await self.__switch.reboot_unit(unit, bootloader)
         return make_json_response()
 
-
+    # =====
 
     @exposed_http("POST", "/switch/edids/create")
     async def __create_edid(self, req: Request) -> Response:
@@ -150,7 +150,7 @@ class SwitchApi:
         await self.__switch.remove_edid(edid_id)
         return make_json_response()
 
-
+    # =====
 
     @exposed_http("POST", "/switch/atx/power")
     async def __power_handler(self, req: Request) -> Response:

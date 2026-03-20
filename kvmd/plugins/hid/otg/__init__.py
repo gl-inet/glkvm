@@ -44,6 +44,9 @@ from .. import BaseHid
 from .keyboard import KeyboardProcess
 from .mouse import MouseProcess
 
+from ....utils import get_model_name
+
+model_name = get_model_name()
 
 # =====
 class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
@@ -93,11 +96,16 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
 
         self._set_jiggler_absolute(self.__mouse_current.is_absolute())
 
-
-        self.__link_state_paths = [
-            "/sys/kernel/debug/ffd00000.dwc3/link_state",
-            "/sys/kernel/debug/usb/21500000.usb/link_state"
-        ]
+        # 添加 link_state 监听相关属性
+        if model_name == "rmq1":
+            self.__link_state_paths = [
+                "/sys/kernel/debug/8000000.dwc3/link_state",
+            ]
+        else:
+            self.__link_state_paths = [
+                "/sys/kernel/debug/ffd00000.dwc3/link_state",
+                "/sys/kernel/debug/usb/21500000.usb/link_state"
+            ]
         self.__link_state_path = None
         self.__connected_state = None
 
@@ -139,29 +147,29 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
         self.__mouse_proc.start(udc)
         if self.__mouse_alt_proc:
             self.__mouse_alt_proc.start(udc)
-
+        
     async def systask(self) -> None:
         """系统任务：启动 link_state 监听和父类的 jiggler 功能"""
-
+        # 查找存在的 link_state 文件
         self.__link_state_path = self.__find_link_state_file()
-
+        
         if self.__link_state_path:
-
+            # 初始化连接状态
             self.__connected_state = self.__read_link_state()
-            get_logger(0).debug("Starting link_state monitoring for: %s, initial state: %s",
+            get_logger(0).debug("Starting link_state monitoring for: %s, initial state: %s", 
                               self.__link_state_path, self.__connected_state)
-
-
+        
+        # 创建两个任务：父类的 jiggler 功能和 link_state 监听
         tasks = []
-
-
+        
+        # 添加父类的 jiggler 任务
         tasks.append(asyncio.create_task(super().systask()))
-
-
+        
+        # 添加 link_state 监听任务（如果找到文件）
         if self.__link_state_path:
             tasks.append(asyncio.create_task(self.__monitor_link_state()))
-
-
+        
+        # 等待所有任务完成
         try:
             await asyncio.gather(*tasks)
         except Exception:
@@ -184,8 +192,8 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
         try:
             with open(self.__link_state_path, 'r') as f:
                 content = f.read().strip()
-
-            if content in ["On","on"]:
+            
+            if content in ["On","on"]:  # 连接状态
                 return True
             else:
                 return False
@@ -194,7 +202,7 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
 
     async def __monitor_link_state(self) -> None:
         prev_state = self.__connected_state
-
+        
         while True:
             try:
                 current_state = self.__read_link_state()
@@ -205,8 +213,8 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
                     get_logger(0).debug("Link state changed to: %s", current_state)
             except Exception as e:
                 get_logger(0).debug("Error in polling link state: %s", e)
-
-            await asyncio.sleep(1)
+            
+            await asyncio.sleep(1)  # 每秒检查一次
 
     async def get_state(self) -> dict:
         keyboard_state = await self.__keyboard_proc.get_state()
@@ -215,7 +223,7 @@ class Plugin(BaseHid):  # pylint: disable=too-many-instance-attributes
             "enabled": True,
             "online": True,
             "busy": False,
-            "connected": self.__connected_state,
+            "connected": self.__connected_state,  # 使用从 link_state 读取的连接状态
             "keyboard": {
                 "online": keyboard_state["online"],
                 "leds": {

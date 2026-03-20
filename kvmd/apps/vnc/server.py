@@ -377,9 +377,9 @@ class _Client(RfbClient):  # pylint: disable=too-many-instance-attributes
             return True
         elif 1 <= self.__info_switch_units <= 2:
             port = float(codes[0])
-        else:
+        else:  # self.__info_switch_units > 2:
             if len(codes) == 1:
-                return False
+                return False  # Wait for the second key
             port = (codes[0] + 1) + (codes[1] + 1) / 10
         get_logger(0).info("%s [main]: Switching port to %s ...", self._remote, port)
         await self.__kvmd_session.switch.set_active(port)
@@ -402,7 +402,7 @@ class _Client(RfbClient):  # pylint: disable=too-many-instance-attributes
         if self.__kvmd_ws:
             await self.__kvmd_ws.send_key_event(key, state)
 
-
+    # =====
 
     async def _on_mouse_button_event(self, button: int, state: bool) -> None:
         assert self.__stage1_authorized.is_passed()
@@ -419,7 +419,7 @@ class _Client(RfbClient):  # pylint: disable=too-many-instance-attributes
         if self.__kvmd_ws:
             await self.__kvmd_ws.send_mouse_move_event(to_x, to_y)
 
-
+    # =====
 
     async def _on_cut_event(self, text: str) -> None:
         assert self.__stage1_authorized.is_passed()
@@ -559,7 +559,7 @@ class VncServer:  # pylint: disable=too-many-instance-attributes
             try:
                 vncpasses: set[str] = set()
                 for (_, line) in tools.passwds_splitted(await aiotools.read_file(self.__vncpass_path)):
-                    if " -> " in line:
+                    if " -> " in line:  # Compatibility with old ipmipasswd file format
                         line = line.split(" -> ", 1)[0]
                     if len(line.strip()) > 0:
                         vncpasses.add(line)

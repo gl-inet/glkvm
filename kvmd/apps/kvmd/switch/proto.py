@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import struct
@@ -29,7 +29,7 @@ from .types import Edid
 from .types import Colors
 
 
-
+# =====
 class Packable:
     def pack(self) -> bytes:
         raise NotImplementedError()
@@ -41,7 +41,7 @@ class Unpackable:
         raise NotImplementedError()
 
 
-
+# =====
 @dataclasses.dataclass(frozen=True)
 class Header(Packable, Unpackable):
     proto:   int
@@ -115,7 +115,7 @@ class UnitQuirks:
 
 
 @dataclasses.dataclass(frozen=True)
-class UnitState(Unpackable):
+class UnitState(Unpackable):  # pylint: disable=too-many-instance-attributes
     version:       UnitVersion
     flags:         UnitFlags
     ch:            int
@@ -134,7 +134,7 @@ class UnitState(Unpackable):
 
     def compare_edid(self, ch: int, edid: Optional["Edid"]) -> bool:
         if edid is None:
-
+            # Сойдет любой невалидный EDID
             return (not self.video_edid[ch])
         return (
             self.video_edid[ch] == edid.valid
@@ -142,7 +142,7 @@ class UnitState(Unpackable):
         )
 
     @classmethod
-    def unpack(cls, data: bytes, offset: int=0) -> "UnitState":
+    def unpack(cls, data: bytes, offset: int=0) -> "UnitState":  # pylint: disable=too-many-locals
         (
             sw_version, hw_version, flags, ch,
             beacons, nc0, nc1, nc2, nc3, nc4, nc5,
@@ -209,7 +209,7 @@ class UnitAtxLeds(Unpackable):
         )
 
 
-
+# =====
 @dataclasses.dataclass(frozen=True)
 class BodySwitch(Packable):
     ch: int
@@ -308,7 +308,7 @@ class BodySetQuirks(Packable):
         return self.ignore_hpd.to_bytes()
 
 
-
+# =====
 @dataclasses.dataclass(frozen=True)
 class Request:
     header: Header
@@ -336,5 +336,5 @@ class Response:
                 return Response(header, UnitState.unpack(msg, Header.SIZE))
             case Header.ATX_LEDS:
                 return Response(header, UnitAtxLeds.unpack(msg, Header.SIZE))
-
+        # raise RuntimeError(f"Unknown OP in the header: {header!r}")
         return None

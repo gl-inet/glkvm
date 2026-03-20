@@ -73,7 +73,7 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
         self.__state_flags = aiomulti.AioSharedFlags({"online": True, **initial_state}, notifier)
         self.__stop_event = multiprocessing.Event()
         self.__no_device_reported = False
-        self.__write_select_fail_count = 0
+        self.__write_select_fail_count = 0  # 添加写入选择失败计数器
 
         self.__logger: (logging.Logger | None) = None
 
@@ -199,7 +199,7 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
                              self.__name, written, len(report))
         except Exception as ex:
             if isinstance(ex, OSError) and (
-                # https://github.com/raspberrypi/linux/commit/61b7f805dc2fd364e0df682de89227e94ce88e25
+                # https://github.com/raspberrypi/linux/commit/61b7f805dc2fd364e0df682de89227e94ce88e2
                 ex.errno == errno.EAGAIN  # pylint: disable=no-member
                 or ex.errno == errno.ESHUTDOWN  # pylint: disable=no-member
             ):
@@ -229,7 +229,10 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
                 try:
                     report = os.read(self.__fd, self.__read_size)
                 except Exception as ex:
-                    if isinstance(ex, OSError) and ex.errno == errno.EAGAIN:  # pylint: disable=no-member
+                    if isinstance(ex, OSError) and (
+                        ex.errno == errno.EAGAIN  # pylint: disable=no-member
+                        or ex.errno == errno.ESHUTDOWN  # pylint: disable=no-member
+                    ):
                         logger.debug("HID-%s busy/unplugged (read): %s", self.__name, tools.efmt(ex))
                     else:
                         logger.exception("Can't read report from HID-%s", self.__name)
@@ -267,20 +270,20 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
         if self.__fd >= 0:
             try:
                 if select.select([], [self.__fd], [], self.__select_timeout)[1]:
-
+                    # 如果之前有写入选择失败，现在恢复了，打印恢复日志
                     if self.__write_select_fail_count > 0:
-                        logger.info("HID-%s write select recovered after %d failures",
+                        logger.info("HID-%s write select recovered after %d failures", 
                                    self.__name, self.__write_select_fail_count)
                         self.__write_select_fail_count = 0
                     # Закомментировано, потому что иногда запись доступна, но устройство отключено
                     # self.__state_flags.update(online=True)
                     return True
                 else:
-
+                    # Если запись недоступна，то скорее всего устройство отключено
                     self.__write_select_fail_count += 1
-
+                    # only print log when the count is 2^n
                     if self.__is_power_of_two(self.__write_select_fail_count):
-                        logger.debug("HID-%s is busy/unplugged (write select) [%d times]",
+                        logger.debug("HID-%s is busy/unplugged (write select) [%d times]", 
                                    self.__name, self.__write_select_fail_count)
             except Exception as ex:
                 logger.error("Can't select() for write HID-%s: %s", self.__name, tools.efmt(ex))

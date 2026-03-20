@@ -52,7 +52,7 @@ from .crypto import rfb_encrypt_challenge
 from .stream import RfbClientStream
 
 
-
+# =====
 class _SecurityError(Exception):
     pass
 
@@ -111,11 +111,11 @@ class RfbClient(RfbClientStream):  # pylint: disable=too-many-instance-attribute
 
         self.__lock = asyncio.Lock()
 
-
-
+        # Эти состояния шарить не обязательно - бекенд исключает дублирующиеся события.
+        # Все это нужно только чтобы не посылать лишние события в сокет KVMD
         self.__modifiers = 0
         self.__mouse_buttons: dict[int, bool] = {}
-        self.__mouse_move = (-1, -1, -1, -1)
+        self.__mouse_move = (-1, -1, -1, -1)  # (width, height, X, Y)
 
     # =====
 
@@ -494,7 +494,7 @@ class RfbClient(RfbClientStream):  # pylint: disable=too-many-instance-attribute
         if self._encodings.has_ext_keys:  # Preferred method
             await self._write_fb_update("ExtKeys FBUR", 0, 0, RfbEncodings.EXT_KEYS, drain=True)
 
-        if self._encodings.has_ext_mouse:
+        if self._encodings.has_ext_mouse:  # Preferred too
             await self._write_fb_update("ExtMouse FBUR", 0, 0, RfbEncodings.EXT_MOUSE, drain=True)
 
         await self._on_set_encodings()
@@ -530,8 +530,8 @@ class RfbClient(RfbClientStream):  # pylint: disable=too-many-instance-attribute
                     key = variants.get(0)
 
                 if key is None and self.__modifiers == 0 and SymmapModifiers.SHIFT in variants:
-
-
+                    # JUMP doesn't send shift events:
+                    #   - https://github.com/pikvm/pikvm/issues/820
                     key = variants[SymmapModifiers.SHIFT]
                     fake_shift = True
 
@@ -577,7 +577,7 @@ class RfbClient(RfbClientStream):  # pylint: disable=too-many-instance-attribute
     async def __handle_pointer_event(self) -> None:
         (buttons, to_x, to_y) = await self._read_struct("pointer event", "B HH")
         ext_buttons = 0
-        if self._encodings.has_ext_mouse and (buttons & 0x80):
+        if self._encodings.has_ext_mouse and (buttons & 0x80):  # Marker bit 7 for ext event
             ext_buttons = await self._read_number("ext pointer event buttons", "B")
 
         if buttons & (0x40 | 0x20 | 0x10 | 0x08):
@@ -632,5 +632,5 @@ class RfbClient(RfbClientStream):  # pylint: disable=too-many-instance-attribute
             code = (0xE0 << 8) | (code & ~0x80)
         key = AT1_TO_EVDEV.get(code, 0)
         if key:
-            self.__switch_modifiers_evdev(key, state)
+            self.__switch_modifiers_evdev(key, state)  # Предполагаем, что модификаторы всегда известны
             await self._on_key_event(key, state)

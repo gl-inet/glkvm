@@ -20,6 +20,7 @@
 # ========================================================================== #
 
 
+import asyncio
 import pwd
 import grp
 import dataclasses
@@ -29,6 +30,7 @@ import threading
 
 import secrets
 import pyotp
+
 
 from ...logging import get_logger
 
@@ -54,6 +56,22 @@ class _Session:
 
 
 @dataclasses.dataclass
+class _TwoStepSession:
+    user: str
+    expire_ts: float       # 使用 time.time() 绝对时间戳
+    original_expire: int   # 原始请求的 expire 参数
+    client_ip: str         # 客户端 IP
+    user_agent: str        # 浏览器 User-Agent
+    device_type: str       # 设备类型 (Mobile/Tablet/PC/Unknown)
+    browser: str           # 浏览器名称
+    approved: bool = False # 是否已审批通过
+
+    def __post_init__(self) -> None:
+        assert self.user == self.user.strip()
+        assert self.user
+
+
+@dataclasses.dataclass
 class _LoginAttempt:
     timestamp: float
 
@@ -74,7 +92,7 @@ class RateLimitError(Exception):
         self.remaining_time = remaining_time
 
 
-class AuthManager:
+class AuthManager:  # pylint: disable=too-many-arguments,too-many-instance-attributes
     def __init__(
         self,
         enabled: bool,
@@ -96,6 +114,8 @@ class AuthManager:
         rate_limit_max_attempts: int = 10,
         rate_limit_time_window: int = 600,
         rate_limit_lockout_duration: int = 600,
+
+        two_step_login_enabled: bool = False,
     ) -> None:
 
         logger = get_logger(0)
@@ -136,16 +156,16 @@ class AuthManager:
 
         self.__totp_secret_path = totp_secret_path
 
-        self.__sessions: dict[str, _Session] = {}
+        self.__sessions: dict[str, _Session] = {}  # {token: session}
 
-
+        # Rate limiting configuration
         self.__rate_limit_enabled = rate_limit_enabled
         self.__rate_limit_max_attempts = rate_limit_max_attempts
         self.__rate_limit_time_window = rate_limit_time_window
         self.__rate_limit_lockout_duration = rate_limit_lockout_duration
 
-
-        self.__client_locks: dict[str, _ClientLockInfo] = {}
+        # Rate limiting state
+        self.__client_locks: dict[str, _ClientLockInfo] = {}  # {client_ip: lock_info}
         self.__rate_limit_lock = threading.Lock()
 
         if self.__rate_limit_enabled:
@@ -153,6 +173,14 @@ class AuthManager:
                         self.__rate_limit_max_attempts,
                         self.__rate_limit_time_window,
                         self.__rate_limit_lockout_duration)
+
+        # Two-step login
+        self.__two_step_login_enabled = two_step_login_enabled
+        self.__two_step_sessions: dict[str, _TwoStepSession] = {}  # {two_step_token: session}
+        self.__two_step_expire = 60  # 1 minute
+
+        if self.__two_step_login_enabled:
+            logger.info("Two-step login is enabled")
 
     def is_auth_enabled(self) -> bool:
         return self.__enabled
@@ -171,7 +199,7 @@ class AuthManager:
         assert self.__int_service
         logger = get_logger(0)
 
-
+        # 2fa, 页面会把2fa密码拼接在passwd后面
         if self.__totp_secret_path:
             with open(self.__totp_secret_path) as file:
                 secret = file.read().strip()
@@ -201,7 +229,7 @@ class AuthManager:
         assert expire >= 0
         assert self.__enabled
 
-
+        # Check if client is rate limited
         if self.__rate_limit_enabled:
             is_locked, remaining_time = self._is_client_locked(client_ip)
             if is_locked:
@@ -212,7 +240,7 @@ class AuthManager:
                     remaining_time
                 )
 
-
+        # Perform cleanup periodically (every 100th login attempt)
         if self.__rate_limit_enabled and hash(client_ip) % 100 == 0:
             self._cleanup_expired_data()
 
@@ -229,10 +257,10 @@ class AuthManager:
                                self.__get_sessions_number(session.user))
             return token
         else:
-
+            # Record failed attempt for rate limiting
             if self.__rate_limit_enabled:
                 self._record_failed_attempt(client_ip)
-
+                # Check if client is now locked after this attempt
                 is_locked, remaining_time = self._is_client_locked(client_ip)
                 if is_locked:
                     raise RateLimitError(
@@ -254,13 +282,13 @@ class AuthManager:
         assert self.__expire >= 0
 
         if expire == 0:
-
-
+            # The user requested infinite session: apply global expire.
+            # It will allow this (0) or set a limit.
             expire = self.__expire
         else:
-
+            # The user wants a limited session
             if self.__expire > 0:
-
+                # If we have a global limit, override the user limit
                 assert expire > 0
                 expire = min(expire, self.__expire)
 
@@ -293,13 +321,13 @@ class AuthManager:
         assert self.__enabled
         if token in self.__sessions:
             user = self.__sessions[token].user
-
-
-
-
-
-
-
+            # count = 0
+            # for (key_t, session) in list(self.__sessions.items()):
+            #     if session.user == user:
+            #         count += 1
+            #         del self.__sessions[key_t]
+            # get_logger(0).info("Logged out user %r; sessions_closed=%d", user, count)
+            # 去掉删除所有此用户token的代码, 实在太蠢
             del self.__sessions[token]
             get_logger(0).info("Logged out user %r; sessions_left=%d", user, self.__get_sessions_number(user))
 
@@ -308,10 +336,10 @@ class AuthManager:
         session = self.__sessions.get(token)
         if session is not None:
             if session.expire_ts <= 0:
-
+                # Infinite session
                 return session.user
             else:
-
+                # Limited session
                 if self.__get_now_ts() < session.expire_ts:
                     return session.user
                 else:
@@ -321,6 +349,178 @@ class AuthManager:
                                        self.__get_sessions_number(session.user))
         return None
 
+    def is_two_step_login_enabled(self) -> bool:
+        return self.__two_step_login_enabled
+
+    def get_two_step_expire(self) -> int:
+        return self.__two_step_expire
+
+    def set_two_step_login_enabled(self, enabled: bool) -> None:
+        self.__two_step_login_enabled = enabled
+        if not enabled:
+            self.__two_step_sessions.clear()
+        get_logger(0).info("Two-step login %s", "enabled" if enabled else "disabled")
+
+    async def pre_login(self, user: str, passwd: str, expire: int, client_ip: str = 'unknown', user_agent: str = '') -> (str | None):
+        """两步登录第一步：验证用户名密码，返回临时 token"""
+        assert user == user.strip()
+        assert user
+        assert expire >= 0
+        assert self.__enabled
+
+        # Check if client is rate limited
+        if self.__rate_limit_enabled:
+            is_locked, remaining_time = self._is_client_locked(client_ip)
+            if is_locked:
+                get_logger(0).warning("Rate limit: Login attempt blocked for client %s, %d seconds remaining",
+                                      client_ip, remaining_time)
+                raise RateLimitError(
+                    f"Too many failed login attempts. Please try again in {remaining_time} seconds.",
+                    remaining_time
+                )
+
+        # Perform cleanup periodically
+        if hash(client_ip) % 100 == 0:
+            self._cleanup_two_step_sessions()
+
+        if (await self.authorize(user, passwd)):
+            two_step_token = self.__make_new_two_step_token()
+            # 在创建时就解析 user_agent
+            from ...utils import parse_user_agent  # pylint: disable=import-outside-toplevel
+            device_type, browser = parse_user_agent(user_agent)
+            session = _TwoStepSession(
+                user=user,
+                expire_ts=time.time() + self.__two_step_expire,
+                original_expire=expire,
+                client_ip=client_ip,
+                user_agent=user_agent,
+                device_type=device_type,
+                browser=browser,
+                approved=False,
+            )
+            self.__two_step_sessions[two_step_token] = session
+            get_logger(0).info("Pre-login successful for user %r from %s; two_step_token issued, expires in %ds",
+                               user, client_ip, self.__two_step_expire)
+
+            aiotools.create_short_task(asyncio.create_subprocess_shell("killall -SIGUSR2 gl_kvm_gui"))
+
+            return two_step_token
+        else:
+            # Record failed attempt for rate limiting
+            if self.__rate_limit_enabled:
+                self._record_failed_attempt(client_ip)
+                is_locked, remaining_time = self._is_client_locked(client_ip)
+                if is_locked:
+                    raise RateLimitError(
+                        f"Account temporarily locked due to too many failed attempts. Please try again in {remaining_time} seconds.",
+                        remaining_time
+                    )
+        return None
+
+    def complete_two_step_login(self, two_step_token: str) -> tuple[str | None, str]:
+        """两步登录第二步：用临时 token 换取正式 token
+        返回 (token, status):
+            - (token, "ok")      — 审批通过，返回正式 token
+            - (None, "pending")  — 尚未审批，前端应继续轮询
+            - (None, "expired")  — 临时 token 已过期
+            - (None, "invalid")  — 临时 token 无效（不存在或已被拒绝）
+        """
+        assert self.__enabled
+
+        session = self.__two_step_sessions.get(two_step_token)
+        if session is None:
+            get_logger(0).warning("Two-step login failed: invalid token")
+            return (None, "invalid")
+
+        current_time = time.time()
+        if current_time > session.expire_ts:
+            del self.__two_step_sessions[two_step_token]
+            get_logger(0).warning("Two-step login failed: token expired for user %r", session.user)
+            return (None, "expired")
+
+        # 检查是否已审批
+        if not session.approved:
+            return (None, "pending")
+
+        # Token valid and approved, remove it and issue real token
+        del self.__two_step_sessions[two_step_token]
+
+        token = self.__make_new_token()
+        real_session = _Session(
+            user=session.user,
+            expire_ts=self.__make_expire_ts(session.original_expire),
+        )
+        self.__sessions[token] = real_session
+        get_logger(0).info("Two-step login completed for user %r; expire=%s, sessions_now=%d",
+                           real_session.user,
+                           self.__format_expire_ts(real_session.expire_ts),
+                           self.__get_sessions_number(real_session.user))
+        return (token, "ok")
+
+    def __make_new_two_step_token(self) -> str:
+        for _ in range(10):
+            token = "2s_" + secrets.token_hex(32)  # Prefix to distinguish from regular tokens
+            if token not in self.__two_step_sessions:
+                return token
+        raise RuntimeError("Can't generate new unique two-step token")
+
+    def _cleanup_two_step_sessions(self) -> None:
+        """Clean up expired two-step sessions"""
+        current_time = time.time()
+        expired_tokens = [
+            token for token, session in self.__two_step_sessions.items()
+            if current_time > session.expire_ts
+        ]
+        for token in expired_tokens:
+            del self.__two_step_sessions[token]
+
+    def get_pending_two_step_session(self) -> (dict | None):
+        """获取最后一个待审批的两步登录 session 信息"""
+        current_time = time.time()
+        # 清理过期的 session
+        self._cleanup_two_step_sessions()
+
+        # 找到最后一个未审批的 session
+        for token, session in reversed(list(self.__two_step_sessions.items())):
+            if not session.approved and current_time <= session.expire_ts:
+                return {
+                    "token": token,
+                    "user": session.user,
+                    "client_ip": session.client_ip,
+                    "user_agent": session.user_agent,
+                    "device_type": session.device_type,
+                    "browser": session.browser,
+                    "expires_in": int(session.expire_ts - current_time),
+                }
+        return None
+
+    def approve_two_step_session(self, two_step_token: str) -> bool:
+        """批准两步登录请求"""
+        session = self.__two_step_sessions.get(two_step_token)
+        if session is None:
+            get_logger(0).warning("Two-step approve failed: invalid token")
+            return False
+
+        if time.time() > session.expire_ts:
+            del self.__two_step_sessions[two_step_token]
+            get_logger(0).warning("Two-step approve failed: token expired")
+            return False
+
+        session.approved = True
+        get_logger(0).info("Two-step login approved for user %r from %s", session.user, session.client_ip)
+        return True
+
+    def reject_two_step_session(self, two_step_token: str) -> bool:
+        """拒绝两步登录请求"""
+        session = self.__two_step_sessions.get(two_step_token)
+        if session is None:
+            get_logger(0).warning("Two-step reject failed: invalid token")
+            return False
+
+        del self.__two_step_sessions[two_step_token]
+        get_logger(0).info("Two-step login rejected for user %r from %s", session.user, session.client_ip)
+        return True
+
     @aiotools.atomic_fg
     async def cleanup(self) -> None:
         if self.__enabled:
@@ -329,7 +529,7 @@ class AuthManager:
             if self.__ext_service:
                 await self.__ext_service.cleanup()
 
-
+    # =====
 
     def __load_usc_uids(self, users: list[str], groups: list[str]) -> dict[int, str]:
         uids: dict[int, str] = {}
@@ -355,22 +555,22 @@ class AuthManager:
         assert self.__enabled
         return self.__usc_uids.get(creds.uid)
 
-
-
+    # =====
+    # Rate limiting methods
 
     def _get_client_ip(self, req_headers: dict) -> str:
         """Extract client IP from request headers."""
-
+        # Try to get real IP from headers set by reverse proxy
         real_ip = req_headers.get('X-Real-IP')
         if real_ip:
             return real_ip
 
         forwarded_for = req_headers.get('X-Forwarded-For')
         if forwarded_for:
-
+            # X-Forwarded-For can contain multiple IPs, take the first one
             return forwarded_for.split(',')[0].strip()
 
-
+        # Fallback to a default identifier if no IP is available
         return 'unknown'
 
     def _is_client_locked(self, client_ip: str) -> tuple[bool, int]:
@@ -388,8 +588,8 @@ class AuthManager:
                 remaining = int(lock_info.locked_until - current_time)
                 return True, remaining
             else:
-
-                if lock_info.locked_until > 0:
+                # Lock has expired, remove it
+                if lock_info.locked_until > 0:  # Was actually locked
                     get_logger(0).info("Rate limit lock expired for client %s", client_ip)
                     del self.__client_locks[client_ip]
                 return False, 0
@@ -410,14 +610,14 @@ class AuthManager:
             lock_info = self.__client_locks[client_ip]
             lock_info.failed_attempts.append(_LoginAttempt(timestamp=current_time))
 
-
+            # Clean up old attempts outside the time window
             cutoff_time = current_time - self.__rate_limit_time_window
             lock_info.failed_attempts = [
                 attempt for attempt in lock_info.failed_attempts
                 if attempt.timestamp > cutoff_time
             ]
 
-
+            # Check if we should lock the client
             if self._should_lock_client(lock_info):
                 self._lock_client(client_ip, lock_info, current_time)
 
@@ -444,17 +644,17 @@ class AuthManager:
         with self.__rate_limit_lock:
             clients_to_remove = []
             for client_ip, lock_info in self.__client_locks.items():
-
+                # Remove expired locks and old failed attempts
                 if lock_info.locked_until > 0 and lock_info.locked_until <= current_time:
                     lock_info.locked_until = 0
 
-
+                # Clean up old attempts
                 lock_info.failed_attempts = [
                     attempt for attempt in lock_info.failed_attempts
                     if attempt.timestamp > cutoff_time
                 ]
 
-
+                # If no recent attempts and not locked, remove the entry
                 if not lock_info.failed_attempts and lock_info.locked_until <= current_time:
                     clients_to_remove.append(client_ip)
 
@@ -480,7 +680,7 @@ class AuthManager:
             is_locked = lock_info.locked_until > current_time
             remaining_lock_time = max(0, int(lock_info.locked_until - current_time)) if is_locked else 0
 
-
+            # Count recent attempts
             cutoff_time = current_time - self.__rate_limit_time_window
             recent_attempts = len([
                 attempt for attempt in lock_info.failed_attempts

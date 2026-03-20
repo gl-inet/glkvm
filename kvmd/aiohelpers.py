@@ -49,12 +49,12 @@ async def remount(name: str, base_cmd: list[str], rw: bool) -> bool:
 
 async def mount(device: str, mount_point: str, options: str = "",cmd = ["mount"]) -> bool:
     """挂载设备到指定挂载点
-
+    
     Args:
         device: 设备路径
         mount_point: 挂载点路径
         options: 挂载选项
-
+    
     Returns:
         bool: 挂载是否成功
     """
@@ -62,7 +62,7 @@ async def mount(device: str, mount_point: str, options: str = "",cmd = ["mount"]
     if options:
         cmd.extend(["-o", options])
     cmd.extend([device, mount_point])
-
+    
     logger.info("Mounting %s to %s ...", device, mount_point)
     try:
         proc = await aioproc.log_process(cmd, logger)
@@ -76,10 +76,10 @@ async def mount(device: str, mount_point: str, options: str = "",cmd = ["mount"]
 
 async def get_mount_points(device: str) -> list[str]:
     """获取设备的所有挂载点
-
+    
     Args:
         device: 设备路径
-
+    
     Returns:
         list[str]: 挂载点列表
     """
@@ -97,10 +97,10 @@ async def get_mount_points(device: str) -> list[str]:
 
 async def umount(device: str) -> bool:
     """卸载设备的所有挂载点
-
+    
     Args:
         device: 设备路径
-
+    
     Returns:
         bool: 是否所有挂载点都成功卸载
     """
@@ -109,7 +109,7 @@ async def umount(device: str) -> bool:
     if not mount_points:
         logger.info("Device %s is not mounted", device)
         return True
-
+        
     success = True
     for mount_point in mount_points:
         logger.info("Unmounting %s from %s ...", device, mount_point)
@@ -121,5 +121,5 @@ async def umount(device: str) -> bool:
         except Exception as ex:
             logger.error("Can't unmount from %s: %s", mount_point, tools.efmt(ex))
             success = False
-
+            
     return success

@@ -120,34 +120,34 @@ def init(
     **load: bool,
 ) -> tuple[argparse.ArgumentParser, list[str], Section]:
 
-
+    # 如果没有提供argv，则使用系统参数
     argv = (argv or sys.argv)
     assert len(argv) > 0
 
-
+    # 创建参数解析器
     parser = argparse.ArgumentParser(
         prog=(prog or argv[0]),
         description=description,
         add_help=add_help,
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-
+    # 添加配置文件路径参数
     parser.add_argument("-c", "--config", default="/etc/kvmd/main.yaml", type=valid_abs_file,
                         help="设置配置文件路径", metavar="<file>")
-
+    # 添加覆盖配置选项参数
     parser.add_argument("-o", "--set-options", default=[], nargs="+",
                         help="覆盖配置选项列表（格式如 sec/sub/opt=value）", metavar="<k=v>",)
-
+    # 添加查看当前配置参数
     parser.add_argument("-m", "--dump-config", action="store_true",
                         help="查看当前配置（包括所有覆盖）")
-
+    # 如果需要检查运行，添加运行服务参数
     if check_run:
         parser.add_argument("--run", dest="run", action="store_true",
                             help="运行服务")
-
+    # 解析命令行参数
     (options, remaining) = parser.parse_known_args(argv)
 
-
+    # 如果指定了dump-config，则显示配置并退出
     if options.dump_config:
         _dump_config(_init_config(
             config_path=options.config,
@@ -159,10 +159,10 @@ def init(
             load_gpio=True,
         ))
         raise SystemExit()
-
+    # 初始化配置
     config = _init_config(options.config, options.set_options, **load)
 
-
+    # 配置日志
     logging.captureWarnings(True)
     logging.config.dictConfig(config.logging)
     if cli_logging:
@@ -171,7 +171,7 @@ def init(
             style="{",
         ))
 
-
+    # 如果需要检查运行但未指定--run选项，则退出并提示
     if check_run and not options.run:
         raise SystemExit(
             "为防止意外启动，您必须指定 --run 选项来启动。\n"
@@ -179,43 +179,43 @@ def init(
             "请确保您完全理解您正在做什么！"
         )
 
-
+    # 返回解析器、剩余参数和配置
     return (parser, remaining, config)
 
 
 # =====
 def _init_config(config_path: str, override_options: list[str], **load_flags: bool) -> Section:
-
+    # 展开用户路径
     config_path = os.path.expanduser(config_path)
     try:
-
+        # 加载YAML配置文件
         raw_config: dict = load_yaml_file(config_path)
     except Exception as ex:
-
+        # 如果无法读取配置文件，抛出异常
         raise SystemExit(f"ConfigError: 无法读取配置文件 {config_path!r}:\n{tools.efmt(ex)}")
     if not isinstance(raw_config, dict):
-
+        # 确保配置文件的顶层是字典类型
         raise SystemExit(f"ConfigError: 文件 {config_path!r} 的顶层必须是字典")
 
-
+    # 获取配置方案
     scheme = _get_config_scheme()
     try:
-
+        # 合并覆盖配置
         yaml_merge(raw_config, (raw_config.pop("override", {}) or {}))
-
+        # 合并命令行选项
         yaml_merge(raw_config, build_raw_from_options(override_options), "raw CLI options")
-
+        # 修补原始配置
         _patch_raw(raw_config)
-
+        # 根据方案创建配置
         config = make_config(raw_config, scheme)
 
-
+        # 如果需要动态修补，重新创建配置
         if _patch_dynamic(raw_config, config, scheme, **load_flags):
             config = make_config(raw_config, scheme)
 
         return config
     except (ConfigError, UnknownPluginError) as ex:
-
+        # 如果出现配置错误或未知插件错误，抛出异常
         raise SystemExit(f"ConfigError: {ex}")
 
 
@@ -380,32 +380,32 @@ def _dump_config(config: Section) -> None:
 
 
 def _get_config_scheme() -> dict:
-
+    # 读取国家代码
     try:
         with open("/proc/gl-hw-info/country_code", "r") as f:
             country_code = f.read().strip()
     except:
         country_code = ""
-
-
+    
+    # 读取硬件型号
     try:
         with open("/proc/gl-hw-info/model", "r") as f:
             model = f.read().strip()
     except:
         model = ""
 
-
+    # 读取 USB Product ID，如果文件不存在则使用默认值 0x0104
     try:
         with open("/proc/gl-hw-info/usb_pid", "r") as f:
             pid_str = f.read().strip()
-
+            # 支持十六进制格式（如 0x0104）和十进制格式
             if pid_str.startswith("0x") or pid_str.startswith("0X"):
                 default_product_id = int(pid_str, 16)
             else:
-                default_product_id = int(pid_str, 0)
+                default_product_id = int(pid_str, 0)  # 自动检测进制
     except:
-        default_product_id = 0x0104
-
+        default_product_id = 0x0104  # 默认值
+    
     return {
         "logging": Option({}),
 
@@ -424,8 +424,8 @@ def _get_config_scheme() -> dict:
                 "expire":  Option(0,    type=valid_expire),
 
                 "usc": {
-                    "users":  Option([], type=valid_users_list),
-                    "groups": Option(["kvmd-selfauth"], type=valid_users_list),
+                    "users":  Option([], type=valid_users_list),  # PiKVM username has a same regex as a UNIX username
+                    "groups": Option(["kvmd-selfauth"], type=valid_users_list),  # groupname has a same regex as a username
                 },
 
                 "internal": {
@@ -451,6 +451,10 @@ def _get_config_scheme() -> dict:
                     "time_window":       Option(600,  type=valid_rate_limit_time_window),
                     "lockout_duration":  Option(600,  type=valid_rate_limit_lockout_duration),
                 },
+
+                "two_step_login": {
+                    "enabled": Option(False, type=valid_bool),
+                },
             },
 
             "info": {  # Accessed via global config, see kvmd/info for details
@@ -458,7 +462,7 @@ def _get_config_scheme() -> dict:
                 "extras": Option("/usr/share/kvmd/extras", type=valid_abs_dir),
                 "hw": {
                     "platform":      Option("/usr/share/kvmd/platform", type=valid_abs_file, unpack_as="platform_path"),
-
+                    # "vcgencmd_cmd":  Option(["/usr/bin/vcgencmd"], type=valid_command),
                     "ignore_past":   Option(False, type=valid_bool),
                     "state_poll":    Option(5.0,   type=valid_float_f01),
                 },
@@ -538,7 +542,7 @@ def _get_config_scheme() -> dict:
 
                 "unix":    Option("/run/kvmd/ustreamer.sock", type=valid_abs_path, unpack_as="unix_path"),
                 "timeout": Option(2.0, type=valid_float_f01),
-                "snapshot_timeout": Option(5.0, type=valid_float_f01),
+                "snapshot_timeout": Option(5.0, type=valid_float_f01),  # error_delay * 3 + 1
 
                 "process_name_prefix": Option("kvmd/streamer"),
 
@@ -637,8 +641,8 @@ def _get_config_scheme() -> dict:
         },
 
         "otg": {
-            "vendor_id":      Option(0x38eb, type=valid_otg_id),
-            "product_id":     Option(default_product_id, type=valid_otg_id),
+            "vendor_id":      Option(0x38eb, type=valid_otg_id),  # GLKVM
+            "product_id":     Option(default_product_id, type=valid_otg_id),  # 根据硬件型号动态设置
             "manufacturer":   Option("Glinet", type=valid_stripped_string),
             "product":        Option("Glinet Composite Device", type=valid_stripped_string),
             "serial":         Option("CAFEBABE", type=valid_stripped_string, if_none=None),
@@ -660,12 +664,15 @@ def _get_config_scheme() -> dict:
             "devices": {
                 "hid": {
                     "keyboard": {
+                        "enabled": Option(True, type=valid_bool),
                         "start": Option(True, type=valid_bool),
                     },
                     "mouse": {
+                        "enabled": Option(True, type=valid_bool),
                         "start": Option(True, type=valid_bool),
                     },
                     "mouse_alt": {
+                        "enabled": Option(True, type=valid_bool),
                         "start": Option(True, type=valid_bool),
                         "device": Option("/dev/hidg2", type=valid_abs_path),
                     },
@@ -767,31 +774,31 @@ def _get_config_scheme() -> dict:
                 "pre_start_cmd_remove": Option([], type=valid_options),
                 "pre_start_cmd_append": Option([], type=valid_options),
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+                # TODO:没有SYSTEMD,回头改
+                # "post_start_cmd": Option([
+                #     "/usr/bin/systemd-run",
+                #     "--unit=kvmd-otgnet-dnsmasq",
+                #     "/usr/sbin/dnsmasq",
+                #     "--conf-file=/dev/null",
+                #     "--pid-file",
+                #     "--user=dnsmasq",
+                #     "--interface={iface}",
+                #     "--port=0",
+                #     "--dhcp-range={dhcp_ip_begin},{dhcp_ip_end},24h",
+                #     "--dhcp-leasefile=/run/kvmd/dnsmasq.lease",
+                #     "--dhcp-option={dhcp_option_3}",
+                #     "--dhcp-option=6",
+                #     "--keep-in-foreground",
+                # ], type=valid_command),
                 "post_start_cmd_remove": Option([], type=valid_options),
                 "post_start_cmd_append": Option([], type=valid_options),
 
-
-
-
-
-
-
+                # TODO:没有SYSTEMD,回头改
+                # "pre_stop_cmd": Option([
+                #     "/usr/bin/systemctl",
+                #     "stop",
+                #     "kvmd-otgnet-dnsmasq",
+                # ], type=valid_command),
                 "pre_stop_cmd_remove": Option([], type=valid_options),
                 "pre_stop_cmd_append": Option([], type=valid_options),
 
@@ -913,7 +920,7 @@ def _get_config_scheme() -> dict:
 
         "janus": {
             "stun": {
-                "host":          Option("stun.miwifi.com" if country_code == "CN" else "stun.l.google.com", type=valid_ip_or_host, unpack_as="stun_host"),
+                "host":          Option("stun.gl-inet.cn" if country_code == "CN" else "stun.l.google.com", type=valid_ip_or_host, unpack_as="stun_host"),
                 "port":          Option(3478 if country_code == "CN" else 19302, type=valid_port, unpack_as="stun_port"),
                 "timeout":       Option(5.0,   type=valid_float_f01, unpack_as="stun_timeout"),
                 "retries":       Option(5,     type=valid_int_f1, unpack_as="stun_retries"),

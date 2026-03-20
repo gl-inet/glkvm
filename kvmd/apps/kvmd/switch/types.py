@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import re
@@ -33,7 +33,7 @@ from .lib import ParsedEdidNoBlockError
 from .lib import ParsedEdid
 
 
-
+# =====
 @dataclasses.dataclass(frozen=True)
 class EdidInfo:
     mfc_id:         str
@@ -88,7 +88,7 @@ class Edid:
         assert len(self.name) > 0
         assert len(self.data) in [128, 256]
         object.__setattr__(self, "_packed", (self.data + (b"\x00" * 128))[:256])
-        object.__setattr__(self, "crc", bitbang.make_crc16(self._packed))
+        object.__setattr__(self, "crc", bitbang.make_crc16(self._packed))  # Calculate CRC for filled data
         object.__setattr__(self, "valid", ParsedEdid.is_header_valid(self.data))
         try:
             object.__setattr__(self, "info", EdidInfo.from_data(self.data))
@@ -103,15 +103,15 @@ class Edid:
 
     @classmethod
     def from_data(cls, name: str, data: (str | bytes | None)) -> "Edid":
-        if data is None:
+        if data is None:  # Пустой едид
             return Edid(name, b"\x00" * 256)
 
         if isinstance(data, bytes):
             if ParsedEdid.is_header_valid(cls.data):
-                return Edid(name, data)
-            data_hex = data.decode()
-        else:
-            data_hex = str(data)
+                return Edid(name, data)  # Бинарный едид
+            data_hex = data.decode()  # Текстовый едид, прочитанный как бинарный из файла
+        else:  # isinstance(data, str)
+            data_hex = str(data)  # Текстовый едид
 
         data_hex = re.sub(r"\s", "", data_hex)
         assert len(data_hex) in [256, 512]
@@ -182,7 +182,7 @@ class Edids:
         return self.all[self.get_id_for_port(port)]
 
 
-
+# =====
 @dataclasses.dataclass(frozen=True)
 class Color:
     COMPONENTS = frozenset(["red", "green", "blue", "brightness", "blink_ms"])
@@ -251,7 +251,7 @@ class Colors:
         return self._packed
 
 
-
+# =====
 _T = TypeVar("_T")
 
 

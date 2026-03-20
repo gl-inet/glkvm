@@ -27,10 +27,13 @@ from typing import AsyncGenerator
 
 import aiohttp
 import zstandard
+import subprocess
 
 from aiohttp.web import Request
 from aiohttp.web import Response
 from aiohttp.web import StreamResponse
+
+from asyncio import create_subprocess_exec, sleep
 
 from ....logging import get_logger
 
@@ -55,6 +58,9 @@ from ....validators.net import valid_url
 from ....validators.kvm import valid_msd_image_name
 from ....validators.kvm import valid_msd_mount_name
 
+from ....utils import get_model_name
+
+model_name = get_model_name()
 
 # ======
 class MsdApi:
@@ -86,6 +92,12 @@ class MsdApi:
         await self.__msd.set_connected(valid_bool(req.query.get("connected")))
         return make_json_response()
 
+    @exposed_http("POST", "/msd/set_enabled")
+    async def __set_enabled_handler(self, req: Request) -> Response:
+        """动态启用或禁用 MSD 模块"""
+        await self.__msd.set_enabled(valid_bool(req.query.get("enabled")))
+        return make_json_response()
+
     @exposed_http("GET", "/msd/partition_show")
     async def __show_partition_handler(self, req: Request) -> Response:
         devices = await self.__msd.partition_show()
@@ -106,16 +118,36 @@ class MsdApi:
     @exposed_http("GET", "/msd/partition_connect")
     async def __connect_partition_handler(self, req: Request) -> Response:
         await self.__msd.partition_connect()
+        if model_name == "rmq1":
+            try:
+                process = await create_subprocess_exec(
+                    "/usr/bin/reset_udc",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                await process.communicate()
+            except Exception as e:
+                get_logger(0).error(f"reset UDC: {e}")
         return make_json_response()
 
     @exposed_http("GET", "/msd/partition_disconnect")
     async def __disconnect_partition_handler(self, req: Request) -> Response:
         await self.__msd.partition_disconnect()
+        if model_name == "rmq1":
+            try:
+                process = await create_subprocess_exec(
+                    "/usr/bin/reset_udc",
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                await process.communicate()
+            except Exception as e:
+                get_logger(0).error(f"reset UDC: {e}")
         return make_json_response()
 
     @exposed_http("GET", "/msd/partition_format")
     async def __format_partition_handler(self, req: Request) -> Response:
-
+        #    format partition /dev/block/by-name/media
         try:
             path = req.query.get("path", "")
             await self.__msd.partition_format(path)
@@ -182,12 +214,12 @@ class MsdApi:
         written = 0
 
         try:
-
+            # 检查分区剩余空间是否足够
             state = await self.__msd.get_state()
             if state.get("storage") and isinstance(state["storage"], dict):
                 free_space = state["storage"].get("parts", {}).get("", {}).get("free", 0)
                 if size > free_space:
-
+                    # 如果文件大小大于分区剩余空间，直接返回507错误
                     get_logger(0).error("file size(%d bytes) is greater than free space(%d bytes)", size, free_space)
                     raise MsdNoSpaceError()
 
@@ -200,7 +232,7 @@ class MsdApi:
                     written = await writer.write_chunk(chunk)
             return make_json_response(self.__make_write_info(name, size, written))
         except MsdNoSpaceError as ex:
-            return make_json_exception(ex, 507)
+            return make_json_exception(ex, 507)  # 507 Insufficient Storage
 
     @exposed_http("POST", "/msd/write_remote")
     async def __write_remote_handler(self, req: Request) -> (Response | StreamResponse):  # pylint: disable=too-many-locals
@@ -233,12 +265,12 @@ class MsdApi:
 
                 size = valid_int_f0(remote.content_length)
 
-
+                # 检查分区剩余空间是否足够
                 state = await self.__msd.get_state()
                 if state.get("storage") and isinstance(state["storage"], dict):
                     free_space = state["storage"].get("parts", {}).get("", {}).get("free", 0)
                     if size > free_space:
-
+                        # 如果文件大小大于分区剩余空间，直接返回507错误
                         get_logger(0).error("file size(%d bytes) is greater than free space(%d bytes)", size, free_space)
                         raise MsdNoSpaceError()
 
@@ -259,11 +291,11 @@ class MsdApi:
                 return resp
 
         except MsdNoSpaceError as ex:
-            if response is not None:
+            if resp is not None:
                 await stream_write_info()
-                await stream_json_exception(response, ex)
-                return response
-            return make_json_exception(ex, 507)
+                await stream_json_exception(resp, ex)
+                return resp
+            return make_json_exception(ex, 507)  # 507 Insufficient Storage
         except Exception as ex:
             if resp is not None:
                 await stream_write_info()

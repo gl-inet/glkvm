@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import os
@@ -27,11 +27,11 @@ import time
 
 import pyudev
 
-from ..kvmd.switch.device import Device
+from ..kvmd.switch.sysfs_device import Device
 from ..kvmd.switch.proto import Edid
 
 
-
+# =====
 def _find_serial_device() -> str:
     ctx = pyudev.Context()
     for device in ctx.list_devices(subsystem="tty"):
@@ -68,8 +68,8 @@ def _create_edid(arg: str) -> Edid:
         return Edid.from_data(os.path.basename(arg), file.read())
 
 
-
-def main() -> None:
+# =====
+def main() -> None:  # pylint: disable=too-many-statements
     parser = argparse.ArgumentParser()
     parser.add_argument("-d", "--device", default="")
     parser.set_defaults(cmd="")
@@ -91,8 +91,8 @@ def main() -> None:
     cmd.add_argument("unit", type=int)
 
     cmd = add_command("switch")
-    cmd.add_argument("unit", type=int)
-    cmd.add_argument("port", type=int, choices=list(range(5)))
+    #cmd.add_argument("unit", type=int)
+    cmd.add_argument("port", type=int, choices=list(range(4)))
 
     cmd = add_command("beacon")
     cmd.add_argument("unit", type=int)
@@ -115,7 +115,8 @@ def main() -> None:
     opts = parser.parse_args()
 
     if not opts.device:
-        opts.device = _find_serial_device()
+        #opts.device = _find_serial_device()
+        opts.device = None
 
     if opts.cmd == "bootloader" and opts.unit == 0:
         if opts.device:
@@ -127,8 +128,8 @@ def main() -> None:
             raise SystemExit()
         raise SystemExit("Error: No switch found")
 
-    if not opts.device:
-        raise SystemExit("Error: No switch found")
+    # if not opts.device:
+    #     raise SystemExit("Error: No switch found")
 
     with Device(opts.device) as device:
         wait_rid: (int | None) = None
@@ -137,12 +138,16 @@ def main() -> None:
                 device.request_state()
                 device.request_atx_leds()
             case "state":
-                wait_rid = device.request_state()
+                # wait_rid = device.request_state()
+                state = device.request_state()
+                wait_rid = 0
+                raise SystemExit()
             case "bootloader" | "reboot":
                 device.request_reboot(opts.unit, (opts.cmd == "bootloader"))
                 raise SystemExit()
             case "switch":
-                wait_rid = device.request_switch(opts.unit, opts.port)
+                wait_rid = device.request_switch(0, opts.port)
+                raise SystemExit()
             case "leds":
                 wait_rid = device.request_atx_leds()
             case "click":

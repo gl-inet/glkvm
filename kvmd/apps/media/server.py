@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2020  Maxim Devaev <mdevaev@gmail.com>                    #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import asyncio
@@ -42,7 +42,7 @@ from ...clients.streamer import StreamerFormats
 from ...clients.streamer import BaseStreamerClient
 
 
-
+# =====
 @dataclasses.dataclass
 class _Source:
     type:         str
@@ -86,7 +86,7 @@ class MediaServer(HttpServer):
         if jpeg_streamer:
             self.__srcs.append(_Source(self.__K_VIDEO, self.__F_JPEG, jpeg_streamer))
 
-
+    # =====
 
     @exposed_http("GET", "/ws")
     async def __ws_handler(self, req: Request) -> WebSocketResponse:
@@ -99,7 +99,7 @@ class MediaServer(HttpServer):
 
     @exposed_ws(0)
     async def __ws_bin_ping_handler(self, ws: WsSession, _: bytes) -> None:
-        await ws.send_bin(255, b"")
+        await ws.send_bin(255, b"")  # Ping-pong
 
     @exposed_ws(1)
     async def __ws_bin_key_handler(self, ws: WsSession, _: bytes) -> None:
@@ -119,7 +119,7 @@ class MediaServer(HttpServer):
         src: (_Source | None) = None
         for cand in self.__srcs:
             if ws in cand.clients:
-                return
+                return  # Don't allow any double streaming
             if (cand.type, cand.fmt) == (req_type, req_fmt):
                 src = cand
         if src:
@@ -128,7 +128,7 @@ class MediaServer(HttpServer):
             src.clients[ws] = client
             get_logger(0).info("Streaming %s to %s ...", src.streamer, ws)
 
-
+    # =====
 
     async def _init_app(self) -> None:
         logger = get_logger(0)
@@ -153,7 +153,7 @@ class MediaServer(HttpServer):
                 client.sender.cancel()
                 return
 
-
+    # =====
 
     async def __sender(self, client: _Client) -> None:
         need_key = client.src.is_diff()
@@ -185,8 +185,8 @@ class MediaServer(HttpServer):
                             try:
                                 client.queue.put_nowait(frame)
                             except asyncio.QueueFull:
-
-
+                                # Если какой-то из клиентов не справляется, очищаем ему очередь и запрашиваем кейфрейм.
+                                # Я вижу у такой логики кучу минусов, хз как себя покажет, но лучше пока ничего не придумал.
                                 tools.clear_queue(client.queue)
                                 src.key_required = True
                             except Exception:

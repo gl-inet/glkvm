@@ -43,8 +43,8 @@ class InfoManager:
             "auth":   AuthInfoSubmanager(config.kvmd.auth.enabled),
             "meta":   MetaInfoSubmanager(config.kvmd.info.meta),
             "extras": ExtrasInfoSubmanager(config),
-
-
+            # "health": HealthInfoSubmanager(**config.kvmd.info.hw._unpack(ignore="platform")),
+            # "fan":    FanInfoSubmanager(**config.kvmd.info.fan._unpack()),
         }
         self.__queue: "asyncio.Queue[tuple[str, (dict | None)]]" = asyncio.Queue()
 
@@ -54,7 +54,7 @@ class InfoManager:
     async def get_state(self, fields: (list[str] | None)=None) -> dict:
         fields_set = set(fields or list(self.__subs))
 
-        hw = ("hw" in fields_set)
+        hw = ("hw" in fields_set)  # Old for compatible
         system = ("system" in fields_set)
         if hw:
             fields_set.remove("hw")
@@ -69,7 +69,7 @@ class InfoManager:
         if hw:
             state["hw"] = {
                 "health":   state.pop("health"),
-                "platform": (state["system"] or {}).pop("platform"),
+                "platform": (state["system"] or {}).pop("platform"),  # {} makes mypy happy
             }
             if not system:
                 state.pop("system")
@@ -82,14 +82,14 @@ class InfoManager:
         ])
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
-
-
-
-
+        # ==== Granularity table ====
+        #   - system -- Partial
+        #   - auth   -- Partial
+        #   - meta   -- Partial, nullable
+        #   - extras -- Partial, nullable
+        #   - health -- Partial
+        #   - fan    -- Partial
+        # ===========================
 
         while True:
             (field, value) = await self.__queue.get()

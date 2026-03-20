@@ -130,7 +130,7 @@ class InotifyMask:
 #        | OPEN
 #    )
 
-
+    # Helper for all changes events except MODIFY, because it fires on each write()
     ALL_CHANGES_EVENTS = (
         CLOSE_WRITE
         | CREATE
@@ -213,7 +213,7 @@ class Inotify:
             wd = _inotify_check(await aiotools.run_async(libc.inotify_add_watch, self.__fd, _fs_encode(path), mask))
             self.__wd_by_path[path] = wd
             self.__path_by_wd[wd] = path
-
+    
     async def watch_create_and_delete(self, *paths: str) -> None:
         await self.watch(InotifyMask.CREATE | InotifyMask.DELETE, *paths)
 

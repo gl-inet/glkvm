@@ -50,7 +50,7 @@ class MouseDelta:
         return min(max(cls.MIN, value), cls.MAX)
 
 
-
+# =====
 MOUSE_TO_EVDEV = {
     "left":   ecodes.BTN_LEFT,
     "right":  ecodes.BTN_RIGHT,

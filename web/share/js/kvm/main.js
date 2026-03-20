@@ -31,13 +31,13 @@ import {Session} from "./session.js";
 
 
 export function main() {
-	if (checkBrowser(null, "/share/css/kvm/x-mobile.css")) {
+	if (checkBrowser(null, "kvm/x-mobile.css")) {
 		tools.storage.bindSimpleSwitch($("page-close-ask-switch"), "page.close.ask", true, function(value) {
 			if (value) {
-				window.onbeforeunload = function(event) {
+				window.onbeforeunload = function(ev) {
 					let text = "Are you sure you want to close PiKVM session?";
-					if (event) {
-						event.returnValue = text;
+					if (ev) {
+						ev.returnValue = text;
 					}
 					return text;
 				};
@@ -48,14 +48,18 @@ export function main() {
 
 		initWindowManager();
 
-		tools.el.setOnClick($("open-log-button"), () => window.open("/api/log?seek=3600&follow=1", "_blank"));
+		tools.el.setOnClick($("open-log-button"), () => tools.windowOpen("api/log?seek=3600&follow=1"));
 
-		if (tools.config.getBool("kvm--full-tab-stream", false)) {
-			wm.toggleFullTabWindow($("stream-window"), true);
+		tools.storage.bindSimpleSwitch(
+			$("page-full-tab-stream-switch"),
+			"page.full_tab_stream",
+			tools.config.getBool("kvm--full-tab-stream", false));
+		if ($("page-full-tab-stream-switch").checked) {
+			wm.setFullTabWindow($("stream-window"), true);
 		}
+
 		wm.showWindow($("stream-window"));
 
 		new Session();
-
 	}
 }

@@ -113,8 +113,8 @@ class MouseButtonEvent(BaseEvent):
             ecodes.BTN_LEFT:    0x1,
             ecodes.BTN_RIGHT:   0x2,
             ecodes.BTN_MIDDLE:  0x4,
-            ecodes.BTN_BACK:    0x8,
-            ecodes.BTN_FORWARD: 0x10,
+            ecodes.BTN_BACK:    0x8,  # Back/Up
+            ecodes.BTN_FORWARD: 0x10,  # Forward/Down
         }[self.button])
 
 

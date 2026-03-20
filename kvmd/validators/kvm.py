@@ -40,8 +40,8 @@ def valid_atx_button(arg: Any) -> str:
     return check_string_in_list(arg, "ATX button", ["power", "power_long", "reset"])
 
 
-
-
+# 这个函数的用处就是为了允许/开头的路径,给/dev/mmcxxx用
+# 但是不破坏原本valid_msd_image_name的使用场景
 def valid_msd_mount_name(arg: Any) -> str:
     name = "MSD mount name"
     arg = valid_stripped_string_not_empty(arg, name)
@@ -50,7 +50,7 @@ def valid_msd_mount_name(arg: Any) -> str:
         raise_error(arg, name)
     for (index, part) in enumerate(list(parts)):
         parts[index] = valid_printable_filename(part, name=name)
-
+    # 重新组合路径,允许为/开头的目录
     if arg.startswith("/"):
         return "/" + "/".join(parts)
     return "/".join(parts)

@@ -35,11 +35,13 @@ from aiohttp.web import WebSocketResponse
 from ... import __version__
 
 from ...logging import get_logger
+from ...utils import parse_user_agent
 
 from ...errors import OperationError
 
 from ... import aiotools
 from ... import aioproc
+import asyncio
 
 from ...htserver import HttpExposed
 from ...htserver import exposed_http
@@ -82,6 +84,7 @@ from .api.fingerbot import FingerbotApi
 from .api.turn import TurnApi
 from .api.repeater import RepeaterApi
 from .api.modem import ModemApi
+from .api.ap import ApApi
 from .api.wol import WolApi
 from .api.tailscale import TailscaleApi
 from .api.cloudflare import CloudflareApi
@@ -151,7 +154,7 @@ class _Subsystem:
 class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-instance-attributes
     __EV_GPIO_STATE = "gpio"
     __EV_HID_STATE = "hid"
-    __EV_HID_KEYMAPS_STATE = "hid_keymaps"
+    __EV_HID_KEYMAPS_STATE = "hid_keymaps"  # FIXME
     __EV_ATX_STATE = "atx"
     __EV_MSD_STATE = "msd"
     __EV_STREAMER_STATE = "streamer"
@@ -162,6 +165,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     __EV_FINGERBOT_STATE = "fingerbot"
     __EV_REPEATER_STATE = "repeater"
     __EV_MODEMO_STATE = "modem"
+    __EV_AP_STATE = "ap"
     __EV_TURN_STATE = "turn"
 
     def __init__(  # pylint: disable=too-many-arguments,too-many-locals
@@ -172,7 +176,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         log_reader: (LogReader | None),
         user_gpio: UserGpio,
         ocr: Ocr,
-        switch: Switch,
+        switch: (Switch | None),
 
         hid: BaseHid,
         atx: BaseAtx,
@@ -196,12 +200,13 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         self.__snapshoter = snapshoter  # Not a component: No state or cleanup
 
         self.__stream_forever = stream_forever
-
+        self.__switch = switch
         self.__fingerbot_api = FingerbotApi()
         self.__turn_api = TurnApi()
         self.__repeater_api = RepeaterApi()
         self.__modem_api = ModemApi()
-        self.__hid_api = HidApi(hid, keymap_path)
+        self.__ap_api = ApApi()
+        self.__hid_api = HidApi(hid, keymap_path)  # Ugly hack to get keymaps state
         self.__apis: list[object] = [
             self,
             AuthApi(auth_manager),
@@ -212,11 +217,16 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             WolApi(),
             self.__repeater_api,
             self.__modem_api,
+            self.__ap_api,
             TailscaleApi(),
             CloudflareApi(),
             ZerotierApi(),
             self.__turn_api,
-            SystemApi(),
+            SystemApi(
+                get_wss_callback=self._get_wss,
+                close_ws_callback=self._close_ws_by_session,
+                logout_callback=auth_manager.logout,
+            ),
             InfoApi(info_manager),
             LogApi(log_reader),
             UserGpioApi(user_gpio),
@@ -226,10 +236,12 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             RndisApi(),
             UpgradeApi(),
             StreamerApi(streamer, ocr),
-
+            # SwitchApi(switch),
             ExportApi(info_manager, atx, user_gpio),
             RedfishApi(info_manager, atx),
         ]
+        if self.__switch is not None:
+            self.__apis.append(SwitchApi(self.__switch))
         self.__subsystems = [
             _Subsystem.make(auth_manager, "Auth manager"),
             _Subsystem.make(user_gpio,    "User-GPIO",    self.__EV_GPIO_STATE),
@@ -239,13 +251,16 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             _Subsystem.make(streamer,     "Streamer",     self.__EV_STREAMER_STATE),
             _Subsystem.make(ocr,          "OCR",          self.__EV_OCR_STATE),
             _Subsystem.make(info_manager, "Info manager", self.__EV_INFO_STATE),
-
+            # _Subsystem.make(switch,       "Switch",       self.__EV_SWITCH_STATE),
             _Subsystem.make(rndis,        "RNDIS",        self.__EV_RNDIS_STATE),
             _Subsystem.make(self.__fingerbot_api, "Fingerbot", self.__EV_FINGERBOT_STATE),
             _Subsystem.make(self.__repeater_api, "Repeater", self.__EV_REPEATER_STATE),
             _Subsystem.make(self.__modem_api, "Modem", self.__EV_MODEMO_STATE),
+            _Subsystem.make(self.__ap_api, "Ap", self.__EV_AP_STATE),
             _Subsystem.make(self.__turn_api, "turn", self.__EV_TURN_STATE),
         ]
+        if self.__switch is not None:
+            self.__subsystems.append(_Subsystem.make(switch, "Switch", self.__EV_SWITCH_STATE))
 
         self.__streamer_notifier = aiotools.AioNotifier()
         self.__reset_streamer = False
@@ -287,7 +302,19 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
     @exposed_http("GET", "/ws")
     async def __ws_handler(self, req: Request) -> WebSocketResponse:
         stream = valid_bool(req.query.get("stream", True))
-        async with self._ws_session(req, stream=stream) as ws:
+        # 从请求头中获取客户端真实 IP
+        client_ip = req.headers.get("X-Real-IP") or \
+                    (req.headers.get("X-Forwarded-For", "").split(",")[0].strip()) or \
+                    "unknown"
+        # 获取客户端浏览器信息
+        user_agent = req.headers.get("User-Agent", "unknown")
+        # 在连接建立时就解析 user_agent，保存 device_type 和 browser
+        device_type, browser = parse_user_agent(user_agent)
+        # 提取 auth_token 以便后续断开连接时可以删除
+        auth_token = req.query.get("auth_token") or \
+                     req.headers.get("Token") or \
+                     req.cookies.get("auth_token", "")
+        async with self._ws_session(req, stream=stream, client_ip=client_ip, user_agent=user_agent, device_type=device_type, browser=browser, auth_token=auth_token) as ws:
             (major, minor) = __version__.split(".")
             await ws.send_event("loop", {
                 "version": {
@@ -299,7 +326,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                 if sub.event_type:
                     assert sub.trigger_state
                     await sub.trigger_state()
-            await self._broadcast_ws_event(self.__EV_HID_KEYMAPS_STATE, await self.__hid_api.get_keymaps())
+            await self._broadcast_ws_event(self.__EV_HID_KEYMAPS_STATE, await self.__hid_api.get_keymaps())  # FIXME
             return (await self._ws_loop(ws))
 
     @exposed_ws("ping")
@@ -308,7 +335,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
 
     @exposed_ws(0)
     async def __ws_bin_ping_handler(self, ws: WsSession, _: bytes) -> None:
-        await ws.send_bin(255, b"")
+        await ws.send_bin(255, b"")  # Ping-pong
 
     # ===== SYSTEM STUFF
 
@@ -326,7 +353,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         aiotools.create_deadly_task("Stream controller", self.__stream_controller())
         for sub in self.__subsystems:
             if sub.systask:
-
+                # add log
                 get_logger(0).info(f"Starting system task: {sub.name}")
                 aiotools.create_deadly_task(sub.name, sub.systask())
             if sub.event_type:
@@ -357,15 +384,19 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
         logger.info("On-Cleanup complete")
 
     async def _on_ws_opened(self, _: WsSession) -> None:
-
+        # 清理所有键盘按键状态，确保新连接时按键都是抬起状态
         self.__hid.clear_events()
         self.__streamer_notifier.notify()
+        # 异步发送 SIGUSR1 信号给 gl_kvm_gui 进程
+        aiotools.create_short_task(asyncio.create_subprocess_shell("killall -SIGUSR1 gl_kvm_gui"))
 
     async def _on_ws_closed(self, _: WsSession) -> None:
-
-
+        # 这里清理会受到rtty不会正确释放tcp连接的影响,导致会隔好几秒才进行收尾
+        # 所以我们在open的时候清理一遍
         self.__hid.clear_events()
         self.__streamer_notifier.notify()
+        # 异步发送 SIGUSR1 信号给 gl_kvm_gui 进程
+        aiotools.create_short_task(asyncio.create_subprocess_shell("killall -SIGUSR1 gl_kvm_gui"))
 
     def __has_stream_clients(self) -> bool:
         return bool(sum(map(
@@ -387,15 +418,15 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                 prev_internal = internal_need
 
             if self.__reset_streamer or self.__new_streamer_params:
-
+                # 检查是否包含h264_bitrate参数变化
                 has_bitrate_change = "h264_bitrate" in self.__new_streamer_params
                 only_bitrate_change = (
-                    len(self.__new_streamer_params) == 1 and
+                    len(self.__new_streamer_params) == 1 and 
                     "h264_bitrate" in self.__new_streamer_params and
                     not self.__reset_streamer
                 )
-
-
+                
+                # 如果包含bitrate变化，先写入文件
                 if has_bitrate_change:
                     bitrate_value = self.__new_streamer_params["h264_bitrate"]
                     try:
@@ -404,17 +435,17 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                         get_logger(0).info("Updated H264 bitrate to %d", bitrate_value)
                     except Exception as e:
                         get_logger(0).error("Failed to write bitrate to /tmp/bitrate: %s", e)
-
+                
                 if only_bitrate_change:
-
+                    # 只有码率变化时，不重启streamer
                     try:
-
+                        # 更新内部参数状态
                         self.__streamer.set_params(self.__new_streamer_params)
                         self.__new_streamer_params = {}
                         get_logger(0).info("Updated H264 bitrate without restarting streamer")
                     except Exception as e:
                         get_logger(0).error("Failed to update streamer params: %s", e)
-
+                        # 如果更新失败，回退到重启streamer的方式
                         need_after = self.__streamer.is_required()
                         await self.__streamer.ensure_stop(immediately=True, force=True)
                         self.__streamer.set_params(self.__new_streamer_params)
@@ -422,7 +453,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                         if need_after:
                             await self.__streamer.ensure_start(reset=self.__reset_streamer)
                 else:
-
+                    # 其他参数变化或需要重置时，重启streamer
                     need_after = self.__streamer.is_required()
                     await self.__streamer.ensure_stop(immediately=True, force=True)
                     if self.__new_streamer_params:
@@ -430,7 +461,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
                         self.__new_streamer_params = {}
                     if need_after:
                         await self.__streamer.ensure_start(reset=self.__reset_streamer)
-
+                
                 self.__reset_streamer = False
 
             await self.__streamer_notifier.wait()

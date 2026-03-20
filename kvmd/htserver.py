@@ -97,6 +97,7 @@ class HttpExposed:
     path: str
     auth_required: bool
     allow_usc: bool
+    allowed_exe_paths: tuple[str, ...]
     handler: Callable
 
 
@@ -105,6 +106,7 @@ _HTTP_METHOD = "_http_method"
 _HTTP_PATH = "_http_path"
 _HTTP_AUTH_REQUIRED = "_http_auth_required"
 _HTTP_ALLOW_USC = "_http_allow_usc"
+_HTTP_ALLOWED_EXE_PATHS = "_http_allowed_exe_paths"
 
 
 def exposed_http(
@@ -112,6 +114,7 @@ def exposed_http(
     path: str,
     auth_required: bool=True,
     allow_usc: bool=True,
+    allowed_exe_paths: (list[str] | None)=None,
 ) -> Callable:
 
     def set_attrs(handler: Callable) -> Callable:
@@ -120,6 +123,7 @@ def exposed_http(
         setattr(handler, _HTTP_PATH, path)
         setattr(handler, _HTTP_AUTH_REQUIRED, auth_required)
         setattr(handler, _HTTP_ALLOW_USC, allow_usc)
+        setattr(handler, _HTTP_ALLOWED_EXE_PATHS, tuple(allowed_exe_paths or []))
         return handler
     return set_attrs
 
@@ -131,6 +135,7 @@ def _get_exposed_http(obj: object) -> list[HttpExposed]:
             path=getattr(handler, _HTTP_PATH),
             auth_required=getattr(handler, _HTTP_AUTH_REQUIRED),
             allow_usc=getattr(handler, _HTTP_ALLOW_USC),
+            allowed_exe_paths=getattr(handler, _HTTP_ALLOWED_EXE_PATHS),
             handler=handler,
         )
         for handler in [getattr(obj, name) for name in dir(obj)]
@@ -317,9 +322,20 @@ def get_request_unix_credentials(req: BaseRequest) -> (RequestUnixCredentials | 
         return None
     (pid, uid, gid) = struct.unpack("iii", data)
     if pid < 0 or uid < 0 or gid < 0:
-
+        # PID == 0 when the client is outside of server's PID namespace, e.g. when kvmd runs in a container
         return None
     return RequestUnixCredentials(pid=pid, uid=uid, gid=gid)
+
+
+def get_request_exe_path(req: BaseRequest) -> (str | None):
+    """获取通过 Unix Socket 连接的调用进程的可执行文件路径"""
+    creds = get_request_unix_credentials(req)
+    if creds is None or creds.pid <= 0:
+        return None
+    try:
+        return os.readlink(f"/proc/{creds.pid}/exe")
+    except (OSError, FileNotFoundError):
+        return None
 
 
 # =====
@@ -334,8 +350,8 @@ class WsSession:
     def is_alive(self) -> bool:
         return (
             not self.wsr.closed
-            and self.wsr._req is not None
-            and self.wsr._req.transport is not None
+            and self.wsr._req is not None  # pylint: disable=protected-access
+            and self.wsr._req.transport is not None  # pylint: disable=protected-access
         )
 
     async def send_event(self, event_type: str, event: (dict | None)) -> None:
@@ -474,6 +490,10 @@ class HttpServer:
 
     def _get_wss(self) -> list[WsSession]:
         return list(self.__ws_sessions)
+
+    async def _close_ws_by_session(self, ws: WsSession) -> None:
+        """公开方法：关闭指定的 WebSocket session"""
+        await self.__close_ws(ws)
 
     async def __close_ws(self, ws: WsSession) -> None:
         async with self.__ws_sessions_lock:

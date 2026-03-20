@@ -93,7 +93,7 @@ class RedfishApi:
             self.__info_manager.get_state(["meta"]),
         ])
         try:
-            host = str(info_state["meta"].get("server", {})["host"])
+            host = str(info_state["meta"].get("server", {})["host"])  # type: ignore
         except Exception:
             host = ""
         return make_json_response({
@@ -104,7 +104,7 @@ class RedfishApi:
                     "ResetType@Redfish.AllowableValues": list(self.__actions),
                     "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset",
                 },
-                "
+                "#ComputerSystem.SetDefaultBootOrder": {  # https://github.com/pikvm/pikvm/issues/1525
                     "target": "/redfish/v1/Systems/0/Actions/ComputerSystem.SetDefaultBootOrder",
                 },
             },
@@ -119,7 +119,7 @@ class RedfishApi:
 
     @exposed_http("PATCH", "/redfish/v1/Systems/0")
     async def __patch_handler(self, _: Request) -> Response:
-
+        # https://github.com/pikvm/pikvm/issues/1525
         return Response(body=None, status=204)
 
     @exposed_http("POST", "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset")

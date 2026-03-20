@@ -32,9 +32,9 @@ async def ubus_call_async(service, method, args={}):
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE
     )
-
+    
     stdout, stderr = await process.communicate()
-
+    
     if process.returncode != 0:
         raise subprocess.CalledProcessError(process.returncode, cmd, output=stdout, stderr=stderr)
 
@@ -52,7 +52,7 @@ class ModemApi:
     def __init__(self) -> None:
         self._logger = logger
         self.__need_update = False
-
+        # 读取model信息并更新URL
         try:
             with open(MODEL_PATH, "r") as f:
                 self.model = f.read().strip()
@@ -138,7 +138,7 @@ class ModemApi:
     async def __set_sim_setting_handler(self, request: Request) -> Response:
         try:
             params = request.query
-
+            
             required_params = ["con_id", "con_type", "apn", "username", "password", "authentication", "mtu"]
             if not all(p in params for p in required_params):
                 return make_json_response(
@@ -198,7 +198,7 @@ class ModemApi:
                 "tech": self._safe_get(status, ["signal_level", "tech"]),
                 "level": self._safe_get(status, ["signal_level", "level"]),
                 "metric": self._safe_get(status, ["signal_level", "metric"]),
-
+                # "value": self._safe_get(status, ["signal_level", "value"]),
             },
         }
 

@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 
@@ -26,7 +26,7 @@ import subprocess
 from aiohttp.web import Request
 from aiohttp.web import Response
 
-import os
+import os 
 import asyncio
 from ....htserver import ForbiddenError
 from ....htserver import NotFoundError
@@ -56,9 +56,9 @@ class AstrowarpApi:
         self._logger = logger
         pass
 
+    # =====
 
-
-
+    # 读取astrowarp状态
     @exposed_http("GET", "/astrowarp/status")
     async def __status_handler(self, req: Request) -> Response:
         with open(ASTROWARP_CONFIG_PATH, "r") as file:
@@ -67,16 +67,16 @@ class AstrowarpApi:
             enabled = config_json["enable"]
         try:
             with open(ASTROWARP_STATUS_PATH, "r") as file:
-
+                # 文件内容类似{"bindtime":"1735891254","email":"jie.yang@gl-inet.com","username":"yangj"}
                 status_str = file.read().strip()
                 status = json.loads(status_str)
-
+                # 如果bindtime为空，则返回失败
                 if "bindtime" not in status or status["bindtime"] == "":
                     raise Exception("bindtime not found")
                 if "username" not in status or "username" == "":
                     raise Exception("username not found")
             return make_json_response({"result": "success","status": status,"enabled": enabled})
-        except:
+        except Exception:
             return make_json_response({"result": "failed","enabled": enabled})
 
     @exposed_http("GET", "/astrowarp/show")
@@ -89,14 +89,14 @@ class AstrowarpApi:
             with open(self.DDNS_PATH, "r") as file:
                 ddns = file.read().strip()
             return make_json_response({"url":f"{mac},{sn},{ddns}"})
-        except:
+        except Exception:
             return make_json_exception(NotFoundError(),404)
-
+    
     @exposed_http("GET", "/astrowarp/enable")
     async def __enable_handler(self, req: Request) -> Response:
         enable = req.query.get("enable", "")
 
-
+        # 修改配置文件
         with open(ASTROWARP_CONFIG_PATH, "r+") as file:
             config = file.read()
             config_json = json.loads(config)
@@ -106,10 +106,13 @@ class AstrowarpApi:
             file.truncate()
 
         if enable == "true":
-            os.system(f"{ASTROWARP_INIT_PATH} restart")
+            process = await asyncio.create_subprocess_exec(ASTROWARP_INIT_PATH, "restart")
+            await process.wait()
         else:
-            os.system(f"{ASTROWARP_INIT_PATH} stop")
-            os.system(f"{RTTY_INIT_PATH} stop")
+            process = await asyncio.create_subprocess_exec(ASTROWARP_INIT_PATH, "stop")
+            await process.wait()
+            process = await asyncio.create_subprocess_exec(RTTY_INIT_PATH, "stop")
+            await process.wait()
         return make_json_response()
 
     async def _run_command(self, cmd: str) -> str:
@@ -127,11 +130,11 @@ class AstrowarpApi:
         except Exception as e:
             self._logger.error(f"Error executing command: {e}")
             raise BadRequestError()
-
+        
     @exposed_http("POST", "/astrowarp/unbind")
     async def __unbind_handler(self, req: Request) -> Response:
         try:
-
+            # 执行unbind命令
             result = await self._run_command("ubus call gl-cloud unbind")
             return make_json_response({"result": "success"})
         except Exception as e:

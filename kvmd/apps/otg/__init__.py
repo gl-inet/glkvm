@@ -120,7 +120,7 @@ class _GadgetConfig:
         _write(join(func_path, "p_chmask"), 0b11)
         _write(join(func_path, "p_srate"), 48000)
         _write(join(func_path, "p_ssize"), 2)
-        _write(join(func_path, "function_name"), product,optional=True)
+        _write(join(func_path, "function_name"), product,optional=True) #rm1 can't support function_name
         if start:
             self.__start_function(func, eps)
         self.__create_meta(func, product, eps)
@@ -162,16 +162,16 @@ class _GadgetConfig:
             _symlink(self.__profile_path, join(self.__gadget_path, "os_desc", usb.G_PROFILE_NAME))
         if start:
             self.__start_function(func, eps)
-        self.__create_meta(func, "Ethernet", eps)
+        self.__create_meta(func, "Ethernet", eps)   
 
     def add_rndis(self, start: bool) -> None:
-        eps = 3
+        eps = 2
         func = "rndis.usb0"
         func_path = join(self.__gadget_path, "functions", func)
         _mkdir(func_path)
         if start:
             _symlink(func_path, join(self.__profile_path, func))
-        self.__create_meta(func, "RNDIS", eps)
+        self.__create_meta(func, "RNDIS",eps)
 
     def add_keyboard(self, start: bool, remote_wakeup: bool) -> None:
         self.__add_hid("Keyboard", start, remote_wakeup, make_keyboard_hid())
@@ -209,9 +209,9 @@ class _GadgetConfig:
         inquiry_string_flash: str,
     ) -> None:
 
-
-
-
+        # Endpoints number depends on transport_type but we can consider that this is 2
+        # because transport_type is always USB_PR_BULK by default if CONFIG_USB_FILE_STORAGE_TEST
+        # is not defined. See drivers/usb/gadget/function/storage_common.c
         eps = 2
         func = f"mass_storage.{self.__msd_instance}"
         func_path = self.__create_function(func)
@@ -220,18 +220,18 @@ class _GadgetConfig:
         _write(join(func_path, "lun.0/ro"), int(not rw))
         _write(join(func_path, "lun.0/removable"), int(removable))
         _write(join(func_path, "lun.0/nofua"), int(not fua))
-
-        _write(join(func_path, "lun.0/inquiry_string"), inquiry_string_flash)
+        inquiry_string = inquiry_string_cdrom if cdrom else inquiry_string_flash
+        _write(join(func_path, "lun.0/inquiry_string"), inquiry_string)
         if user != "root":
             _chown(join(func_path, "lun.0/cdrom"), user)
             _chown(join(func_path, "lun.0/ro"), user)
             _chown(join(func_path, "lun.0/file"), user)
             _chown(join(func_path, "lun.0/forced_eject"), user)
-
-
+        
+        # 如果需要立即启动，创建符号链接
         if start:
             self.__start_function(func, eps)
-        desc = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else "Mass Storage Disk")
+        desc = ("Mass Storage CD-ROM" if self.__msd_instance == 0 else f"Mass Storage Disk #{self.__msd_instance}")
         self.__create_meta(func, desc, eps)
         self.__msd_instance += 1
 
@@ -313,19 +313,21 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         gc.add_rndis(cod.rndis.start)
 
     if config.kvmd.hid.type == "otg":
-        logger.info("===== HID-Keyboard =====")
-        gc.add_keyboard(cod.hid.keyboard.start, config.otg.remote_wakeup)
-        logger.info("===== HID-Mouse =====")
         ckhm = config.kvmd.hid.mouse
-        gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, ckhm.absolute, ckhm.horizontal_wheel)
-        if config.kvmd.hid.mouse_alt.device:
+        if cod.hid.keyboard.enabled:
+            logger.info("===== HID-Keyboard =====")
+            gc.add_keyboard(cod.hid.keyboard.start, config.otg.remote_wakeup)
+        if cod.hid.mouse.enabled:
+            logger.info("===== HID-Mouse =====")
+            gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, ckhm.absolute, ckhm.horizontal_wheel)
+        if cod.hid.mouse_alt.enabled and cod.hid.mouse_alt.device:
             logger.info("===== HID-Mouse-Alt =====")
             gc.add_mouse(cod.hid.mouse_alt.start, config.otg.remote_wakeup, (not ckhm.absolute), ckhm.horizontal_wheel)
 
     if config.kvmd.msd.type == "otg":
         logger.info("===== MSD =====")
         logger.info("===== MSD Extra:=====", cod.drives.default._unpack())
-
+        # first for cdrom
         if cod.msd.default.cdrom:
             gc.add_msd(
                 start=cod.msd.start,
@@ -340,7 +342,7 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
                 inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
                 inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
                 )
-
+        # second for thumbdrive
         gc.add_msd(
             cod.msd.start, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True,
             inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
@@ -419,7 +421,7 @@ def _cmd_stop(config: Section) -> None:
 
 # =====
 def main(argv: (list[str] | None)=None) -> None:
-
+    # 初始化配置和参数解析器
     (parent_parser, argv, config) = init(
         add_help=False,
         argv=argv,
@@ -427,34 +429,34 @@ def main(argv: (list[str] | None)=None) -> None:
         load_atx=True,
         load_msd=True,
     )
-
-
+    
+    # 创建主参数解析器
     parser = argparse.ArgumentParser(
         prog="kvmd-otg",
         description="Control KVMD OTG device",
         parents=[parent_parser],
     )
-
-
+    
+    # 设置默认命令为打印帮助信息
     parser.set_defaults(cmd=(lambda *_: parser.print_help()))
-
-
+    
+    # 创建子命令解析器
     subparsers = parser.add_subparsers()
 
-
+    # 添加"start"子命令
     cmd_start_parser = subparsers.add_parser("start", help="Start OTG")
     cmd_start_parser.set_defaults(cmd=_cmd_start)
 
-
+    # 添加"stop"子命令
     cmd_stop_parser = subparsers.add_parser("stop", help="Stop OTG")
     cmd_stop_parser.set_defaults(cmd=_cmd_stop)
 
-
+    # 解析命令行参数
     options = parser.parse_args(argv[1:])
-
-
+    
+    # 执行选定的命令
     try:
         options.cmd(config)
     except ValidatorError as ex:
-
+        # 如果发生验证错误，则以错误信息退出程序
         raise SystemExit(str(ex))

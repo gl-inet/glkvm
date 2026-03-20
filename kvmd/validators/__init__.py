@@ -101,7 +101,7 @@ def check_any(arg: Any, name: str, validators: list[Callable[[Any], Any]]) -> An
     raise_error(arg, name)
 
 
-
+# =====
 def filter_printable(arg: str, replace: str, limit: int) -> str:
     return "".join(
         (ch if ch.isprintable() else replace)

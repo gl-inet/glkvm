@@ -27,15 +27,10 @@ from typing import AsyncGenerator
 from ... import aiotools
 
 from . import MsdOperationError
+from . import MsdDisabledError
 from . import BaseMsdReader
 from . import BaseMsdWriter
 from . import BaseMsd
-
-
-# =====
-class MsdDisabledError(MsdOperationError):
-    def __init__(self) -> None:
-        super().__init__("MSD is disabled")
 
 
 # =====
@@ -51,6 +46,9 @@ class Plugin(BaseMsd):
             "storage": None,
             "drive": None,
         }
+
+    async def set_enabled(self, enabled: bool) -> None:
+        pass
 
     async def trigger_state(self) -> None:
         self.__notifier.notify()

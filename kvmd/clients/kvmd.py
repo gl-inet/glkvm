@@ -61,7 +61,7 @@ class _AuthApiPart(_BaseApiPart):
         try:
             async with session.get("/auth/check") as resp:
                 htclient.raise_not_200(resp)
-                return (resp.status == 200)
+                return (resp.status == 200)  # Just for my paranoia
 
         except aiohttp.ClientResponseError as ex:
             if ex.status in [400, 401, 403]:
@@ -204,8 +204,8 @@ class KvmdClientWs:
         try:
             await self.__ws.send_bytes(data)
         except Exception:
-
-
+            # XXX: We don't care about any connection errors
+            # since they will be handled with communication()
             pass
 
 

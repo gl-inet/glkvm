@@ -156,7 +156,7 @@ class _Part(_PartDc):
         super().__init__(name)
         self.__path = path
 
-
+    # 在这里更新了free和size
     async def _reload(self) -> None:  # Only for Storage()
         st = await aiotools.run_async(os.statvfs, self.__path)
         if self.name == "":
@@ -203,7 +203,7 @@ class Storage(_StorageDc):
         images: dict[str, Image] = {}
         parts: dict[str, _Part] = {}
 
-
+        # 异步遍历文件系统，获取根路径、是否为分区和文件列表
         for (root_path, is_part, files) in (await aiotools.run_async(self.__walk)):
             watchable_paths.append(root_path)
             for path in files:

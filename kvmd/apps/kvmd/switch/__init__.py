@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import os
@@ -45,14 +45,15 @@ from .chain import ChainTruncatedEvent
 from .chain import PortActivatedEvent
 from .chain import UnitStateEvent
 from .chain import UnitAtxLedsEvent
-from .chain import Chain
+#from .chain import Chain
+from .sysfs_chain import Chain
 
 from .state import StateCache
 
 from .storage import Storage
 
 
-
+# =====
 class SwitchError(Exception):
     pass
 
@@ -66,8 +67,8 @@ class SwitchUnknownEdidError(SwitchOperationError):
         super().__init__("No specified EDID ID found")
 
 
-
-class Switch:
+# =====
+class Switch:  # pylint: disable=too-many-public-methods
     __X_EDIDS          = "edids"
     __X_DUMMIES        = "dummies"
     __X_COLORS         = "colors"
@@ -91,7 +92,8 @@ class Switch:
 
         self.__default_edid_path = default_edid_path
 
-        self.__chain = Chain(device_path, ignore_hpd_on_top)
+        #self.__chain = Chain(device_path, ignore_hpd_on_top)
+        self.__chain = Chain(ignore_hpd_on_top)
         self.__cache = StateCache()
         self.__storage = Storage(pst_unix_path)
 
@@ -99,7 +101,7 @@ class Switch:
 
         self.__save_notifier = aiotools.AioNotifier()
 
-
+    # =====
 
     def __x_set_edids(self, edids: Edids, save: bool=True) -> None:
         self.__chain.set_edids(edids)
@@ -139,7 +141,7 @@ class Switch:
         if save:
             self.__save_notifier.notify()
 
-
+    # =====
 
     async def set_active_prev(self) -> None:
         self.__chain.set_active_prev()
@@ -150,7 +152,7 @@ class Switch:
     async def set_active_port(self, port: float) -> None:
         self.__chain.set_active_port(self.__chain.translate_port(port))
 
-
+    # =====
 
     async def set_port_beacon(self, port: float, on: bool) -> None:
         self.__chain.set_port_beacon(self.__chain.translate_port(port), on)
@@ -161,7 +163,7 @@ class Switch:
     async def set_downlink_beacon(self, unit: int, on: bool) -> None:
         self.__chain.set_downlink_beacon(unit, on)
 
-
+    # =====
 
     async def atx_power_on(self, port: float) -> None:
         self.__inner_atx_cp(port, False, self.__X_ATX_CP_DELAYS)
@@ -195,7 +197,7 @@ class Switch:
         delay = self.__cache.get_atx_cr_delays()[port]
         self.__chain.click_reset(port, delay, if_powered)
 
-
+    # =====
 
     async def create_edid(self, name: str, data_hex: str) -> str:
         async with self.__lock:
@@ -231,7 +233,7 @@ class Switch:
             edids.remove(edid_id)
             self.__x_set_edids(edids)
 
-
+    # =====
 
     async def set_colors(self, **values: str) -> None:
         async with self.__lock:
@@ -241,12 +243,12 @@ class Switch:
                 if role in values:
                     if values[role] != "default":
                         new[role] = Color.from_text(values[role])
-
+                    # else reset to default
                 else:
                     new[role] = getattr(old, role)
-            self.__x_set_colors(Colors(**new))
+            self.__x_set_colors(Colors(**new))  # type: ignore
 
-
+    # =====
 
     async def set_port_params(
         self,
@@ -269,7 +271,7 @@ class Switch:
                 self.__x_set_edids(edids)
 
             for (reset, key, value) in [
-                (None, self.__X_DUMMIES,        dummy),
+                (None, self.__X_DUMMIES,        dummy),  # None can't be used now
                 ("",   self.__X_PORT_NAMES,     name),
                 (0,    self.__X_ATX_CP_DELAYS,  atx_click_power_delay),
                 (0,    self.__X_ATX_CPL_DELAYS, atx_click_power_long_delay),
@@ -277,15 +279,15 @@ class Switch:
             ]:
                 if value is not None:
                     new = getattr(self.__cache, f"get_{key}")()
-                    new[port] = (None if value == reset else value)
+                    new[port] = (None if value == reset else value)  # Value or reset default
                     getattr(self, f"_Switch__x_set_{key}")(new)
 
-
+    # =====
 
     async def reboot_unit(self, unit: int, bootloader: bool) -> None:
         self.__chain.reboot_unit(unit, bootloader)
 
-
+    # =====
 
     async def get_state(self) -> dict:
         return self.__cache.get_state()
@@ -297,7 +299,7 @@ class Switch:
         async for state in self.__cache.poll_state():
             yield state
 
-
+    # =====
 
     async def systask(self) -> None:
         tasks = [
@@ -390,7 +392,7 @@ class Switch:
                 await asyncio.sleep(1)
 
     async def __systask_storage(self) -> None:
-
+        # При остановке KVMD можем не успеть записать, ну да пофиг
         prevs = dict.fromkeys(self.__X_ALL)
         while True:
             await self.__save_notifier.wait()

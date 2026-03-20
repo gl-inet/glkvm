@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2020  Maxim Devaev <mdevaev@gmail.com>                    #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import asyncio
@@ -46,8 +46,8 @@ from .hid import Hid
 from .multi import MultiHid
 
 
-
-class LocalHidServer:
+# =====
+class LocalHidServer:  # pylint: disable=too-many-instance-attributes
     def __init__(self, kvmd: KvmdClient) -> None:
         self.__kvmd = kvmd
 
@@ -93,8 +93,8 @@ class LocalHidServer:
             try:
                 await func()
             except Exception as ex:
-                if isinstance(ex, OSError) and ex.errno == errno.ENODEV:
-                    pass
+                if isinstance(ex, OSError) and ex.errno == errno.ENODEV:  # pylint: disable=no-member
+                    pass  # Device disconnected
                 elif isinstance(ex, aiohttp.ClientError):
                     get_logger(0).error("KVMD client error: %s", tools.efmt(ex))
                 else:
@@ -142,11 +142,11 @@ class LocalHidServer:
                     self.__kvmd_session = None
                     self.__kvmd_ws = None
 
-
+    # =====
 
     async def __ensure_mouse_relative(self) -> None:
         if self.__info_mouse_absolute:
-
+            # Avoid unnecessary LRU checks, just to speed up a bit
             await self.__inner_ensure_mouse_relative()
 
     @async_lru.alru_cache(maxsize=1, ttl=1)
@@ -182,9 +182,9 @@ class LocalHidServer:
             return True
         elif 1 <= self.__info_switch_units <= 2:
             port = float(codes[0])
-        else:
+        else:  # self.__info_switch_units > 2:
             if len(codes) == 1:
-                return False
+                return False  # Wait for the second key
             port = (codes[0] + 1) + (codes[1] + 1) / 10
         if self.__kvmd_session:
             get_logger(0).info("Switching port to %s ...", port)

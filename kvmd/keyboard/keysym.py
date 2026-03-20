@@ -42,7 +42,7 @@ class SymmapModifiers:
     CTRL: int = 0x4
 
 
-def build_symmap(path: str) -> dict[int, dict[int, int]]:
+def build_symmap(path: str) -> dict[int, dict[int, int]]:  # x11 keysym -> [(symmap_modifiers, evdev_code), ...]
     # https://github.com/qemu/qemu/blob/95a9457fd44ad97c518858a4e1586a5498f9773c/ui/keymaps.c
     logger = get_logger()
 
@@ -60,7 +60,7 @@ def build_symmap(path: str) -> dict[int, dict[int, int]]:
                 evdev_code = AT1_TO_EVDEV.get(key.code)
                 if evdev_code is not None:
                     if (
-                        (evdev_code in EvdevModifiers.SHIFTS and key.shift)
+                        (evdev_code in EvdevModifiers.SHIFTS and key.shift)  # pylint: disable=too-many-boolean-expressions
                         or (evdev_code in EvdevModifiers.ALTS and key.altgr)
                         or (evdev_code in EvdevModifiers.CTRLS and key.ctrl)
                     ):

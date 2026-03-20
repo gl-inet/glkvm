@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2020  Maxim Devaev <mdevaev@gmail.com>                    #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 import time
@@ -28,7 +28,7 @@ from typing import Awaitable
 from evdev import ecodes
 
 
-
+# =====
 class MagicHandler:
     __MAGIC_KEY = ecodes.KEY_LEFTALT
     __MAGIC_TIMEOUT = 2
@@ -49,7 +49,7 @@ class MagicHandler:
         self.__ts = 0.0
         self.__codes: list[int] = []
 
-    async def handle_key(self, key: int, state: bool) -> None:
+    async def handle_key(self, key: int, state: bool) -> None:  # pylint: disable=too-many-branches
         if self.__ts + self.__MAGIC_TIMEOUT < time.monotonic():
             self.__taps = 0
             self.__ts = 0
@@ -72,8 +72,8 @@ class MagicHandler:
                 elif self.__numeric_handler is not None and (ecodes.KEY_1 <= key <= ecodes.KEY_8):
                     codes.append(key - ecodes.KEY_1)
                     if not (await self.__numeric_handler(list(codes))):
-
-
+                        # Если хандлер хочет код большей длины, он возвращает False,
+                        # и мы ждем следующую цифру.
                         self.__taps = taps
                         self.__ts = time.monotonic()
                         self.__codes = codes

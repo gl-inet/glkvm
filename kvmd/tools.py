@@ -28,7 +28,7 @@ import queue
 import shlex
 
 from typing import Generator
-from typing import TypeVar
+from typing import TypeVar, Optional
 from _queue import Empty
 
 
@@ -68,7 +68,7 @@ def swapped_kvs(dct: dict[_DictKeyT, _DictValueT]) -> dict[_DictValueT, _DictKey
 
 
 # =====
-def clear_queue(q: (multiprocessing.queues.Queue | asyncio.Queue)) -> None:
+def clear_queue(q: (multiprocessing.queues.Queue | asyncio.Queue)) -> None:  # pylint: disable=invalid-name
     while True:
         try:
             q.get_nowait()
@@ -85,11 +85,82 @@ def build_cmd(cmd: list[str], cmd_remove: list[str], cmd_append: list[str]) -> l
     ]
 
 
-
+# =====
 def passwds_splitted(text: str) -> Generator[tuple[int, str], None, None]:
     for (lineno, line) in enumerate(text.split("\n")):
         line = line.rstrip("\r")
         ls = line.strip()
-        if len(ls) == 0 or ls.startswith("
+        if len(ls) == 0 or ls.startswith("#"):
             continue
         yield (lineno, line)
+
+
+# =====
+async def run_command(
+    *args: str,
+    timeout: int = 30,
+    check: bool = False,
+    error_msg: str = "Command failed",
+    input: Optional[bytes] = None
+) -> tuple[int, str, str]:
+    """
+    执行命令并返回 (returncode, stdout, stderr)
+    
+    Args:
+        *args: 命令参数列表
+        timeout: 超时时间（秒）
+        check: 如果为 True，则在命令失败时抛出 RuntimeError
+        error_msg: 命令失败时的错误消息前缀
+    
+    Returns:
+        (returncode, stdout, stderr)
+    """
+    process = await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE if input else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(input=input), timeout=timeout)
+    stdout_text = stdout.decode() if stdout else ""
+    stderr_text = stderr.decode() if stderr else ""
+    
+    if check and process.returncode != 0:
+        raise RuntimeError(f"{error_msg}: {stderr_text}")
+    
+    return process.returncode, stdout_text, stderr_text
+
+
+async def run_shell(
+    cmd: str,
+    timeout: int = 30,
+    check: bool = False,
+    error_msg: str = "Command failed",
+    input: Optional[bytes] = None
+) -> tuple[int, str, str]:
+    """
+    执行 shell 命令并返回 (returncode, stdout, stderr)
+    
+    Args:
+        cmd: shell 命令字符串
+        timeout: 超时时间（秒）
+        check: 如果为 True，则在命令失败时抛出 RuntimeError
+        error_msg: 命令失败时的错误消息前缀
+    
+    Returns:
+        (returncode, stdout, stderr)
+    """
+    process = await asyncio.create_subprocess_shell(
+        cmd,
+        stdin=asyncio.subprocess.PIPE if input else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE
+    )
+    stdout, stderr = await asyncio.wait_for(process.communicate(input=input), timeout=timeout)
+    stdout_text = stdout.decode() if stdout else ""
+    stderr_text = stderr.decode() if stderr else ""
+    
+    if check and process.returncode != 0:
+        raise RuntimeError(f"{error_msg}: {stderr_text}")
+    
+    return process.returncode, stdout_text, stderr_text

@@ -282,7 +282,7 @@ class MemsinkStreamerClient(BaseStreamerClient):
                 yield read_frame
 
     def __check_format(self, fmt: int) -> None:
-        if fmt == StreamerFormats._MJPEG:
+        if fmt == StreamerFormats._MJPEG:  # pylint: disable=protected-access
             fmt = StreamerFormats.JPEG
         if fmt != self.__fmt:
             raise StreamerPermError("Invalid sink format")

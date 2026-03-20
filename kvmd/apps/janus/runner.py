@@ -64,7 +64,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         self.__janus_task: (asyncio.Task | None) = None
         self.__janus_proc: (asyncio.subprocess.Process | None) = None  # pylint: disable=no-member
 
-
+        # TURN server 配置监听
         self.__turn_file_path = "/tmp/turnserver.json"
         self.__turn_file_mtime: (float | None) = None
         self.__turn_data: (dict | None) = None
@@ -92,9 +92,13 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         try:
             if not os.path.exists(self.__turn_file_path):
                 return None
-
+            
             with open(self.__turn_file_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                data = json.load(f)
+                # 标准化 uris 字段：确保始终为 list
+                if isinstance(data.get("uris"), dict):
+                    data["uris"] = list(data["uris"].values())
+                return data
         except Exception as ex:
             get_logger().error("Error reading turn file: %s", tools.efmt(ex))
             return None
@@ -102,17 +106,17 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
     def __is_turn_config_changed(self) -> bool:
         """检查 TURN 配置是否发生变化"""
         current_mtime = self.__get_turn_file_mtime()
-
-
+        
+        # 如果 mtime 发生变化，检查文件内容
         if current_mtime != self.__turn_file_mtime:
             self.__turn_file_mtime = current_mtime
             current_data = self.__read_turn_file()
-
-
+            
+            # 比较文件内容是否真的发生了变化
             if current_data != self.__turn_data:
                 self.__turn_data = current_data
                 return True
-
+                
         return False
 
     async def __run(self) -> None:
@@ -120,21 +124,33 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         logger = get_logger(0)
         logger.info("Probbing the network first time ...")
 
-
+        # 初始化 TURN 配置
         self.__turn_file_mtime = self.__get_turn_file_mtime()
         self.__turn_data = self.__read_turn_file()
 
         prev_netcfg: (_Netcfg | None) = None
+        first_probe = True
         while True:
             retry = 0
             netcfg = _Netcfg()
-            for retry in range(1):
-                netcfg = await self.__get_netcfg()
-                if netcfg.ext_ip:
-                    break
-                await asyncio.sleep(self.__check_retries_delay)
-            if retry != 0 and netcfg.ext_ip:
-                logger.info("I'm fine, continue working ...")
+            
+            # 首次探测设置超时，避免网络问题导致长时间阻塞
+            if first_probe:
+                try:
+                    netcfg = await asyncio.wait_for(self.__get_netcfg(), timeout=10.0)
+                except asyncio.TimeoutError:
+                    logger.warning("Network probe timeout, starting Janus with local-only config")
+                    src_ip = self.__get_default_ip() or "0.0.0.0"
+                    netcfg = _Netcfg(src_ip=src_ip)
+                first_probe = False
+            else:
+                for retry in range(1):
+                    netcfg = await self.__get_netcfg()
+                    if netcfg.ext_ip:
+                        break
+                    await asyncio.sleep(self.__check_retries_delay)
+                if retry != 0 and netcfg.ext_ip:
+                    logger.info("I'm fine, continue working ...")
 
             if prev_netcfg is None:
                 logger.info("Initializing Janus with %s ...", netcfg)
@@ -146,12 +162,12 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     await self.__stop_janus()
                 prev_netcfg = netcfg
             elif _Netcfg.is_network_changed(prev_netcfg, netcfg):
-
+                # 如果之前的NAT类型是ERROR或者之前没有公网IP，立即重启
                 should_restart_immediately = (
-                    prev_netcfg.nat_type == StunNatType.ERROR or
+                    prev_netcfg.nat_type == StunNatType.ERROR or 
                     not prev_netcfg.ext_ip
                 )
-
+                
                 if should_restart_immediately:
                     logger.info("Previous NAT type was ERROR or no public IP, restarting Janus immediately for %s", netcfg)
                     netcfg_diff_times = 0

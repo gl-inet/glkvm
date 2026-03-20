@@ -43,7 +43,7 @@ from ...clients.streamer import StreamerSnapshot
 from ...clients.streamer import HttpStreamerClient
 from ...clients.streamer import HttpStreamerClientSession
 
-
+# =====
 class _StreamerParams:
     __DESIRED_FPS = "desired_fps"
 
@@ -103,7 +103,7 @@ class _StreamerParams:
             self.__params[self.__H264_GOP] = min(max(h264_gop, h264_gop_min), h264_gop_max)
             self.__limits[self.__H264_GOP] = {"min": h264_gop_min, "max": h264_gop_max}
 
-
+        # Always include zero_delay parameter
         self.__params[self.__ZERO_DELAY] = zero_delay
 
     def get_features(self) -> dict:
@@ -112,7 +112,7 @@ class _StreamerParams:
             self.__RESOLUTION: self.__has_resolution,
             "h264": self.__has_h264,
             "h265": self.__has_h264,
-            "zero_delay": True,
+            "zero_delay": True,  # Always available
         }
 
     def get_limits(self) -> dict:
@@ -146,7 +146,7 @@ class _StreamerParams:
         if self.__VIDEO_FORMAT in params and self.__has_h264:
             new_params[self.__VIDEO_FORMAT] = params[self.__VIDEO_FORMAT]
 
-
+        # Handle zero_delay parameter (boolean, no limits check needed)
         if self.__ZERO_DELAY in params:
             new_params[self.__ZERO_DELAY] = bool(params[self.__ZERO_DELAY])
 
@@ -226,7 +226,7 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
             user_agent=htclient.make_user_agent("KVMD"),
         )
         self.__client_session: (HttpStreamerClientSession | None) = None
-
+        
         self.__snapshot: (StreamerSnapshot | None) = None
 
         self.__notifier = aiotools.AioNotifier()
@@ -301,7 +301,7 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
     # =====
 
     def set_params(self, params: dict) -> None:
-
+        # assert not self.__streamer_task
         self.__notifier.notify(self.__ST_PARAMS)
         return self.__params.set_params(params)
 
@@ -323,13 +323,13 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         self.__notifier.notify(self.__ST_FULL)
 
     async def poll_state(self) -> AsyncGenerator[dict, None]:
-
-
-
-
-
-
-
+        # ==== Granularity table ====
+        #   - features -- Full
+        #   - limits   -- Partial, paired with params
+        #   - params   -- Partial, paired with limits
+        #   - streamer -- Partial, nullable
+        #   - snapshot -- Partial
+        # ===========================
 
         def signal_handler(*_: Any) -> None:
             get_logger(0).info("Got SIGUSR2, checking the stream state ...")

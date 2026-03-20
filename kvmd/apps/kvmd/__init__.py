@@ -41,6 +41,18 @@ from .switch import Switch
 from .server import KvmdServer
 from .init import InitManager
 
+MODEL_PATH = "/proc/gl-hw-info/model"
+
+def get_hw_model() -> str:
+    try:
+        with open(MODEL_PATH, "r") as f:
+            return f.read().strip()
+    except Exception as e:
+        get_logger(0).warning(
+            f"Failed to read model info from {MODEL_PATH}: {e}"
+        )
+        return "unknown"
+
 # =====
 def main(argv: (list[str] | None)=None) -> None:
     config = init_func(
@@ -75,6 +87,15 @@ def main(argv: (list[str] | None)=None) -> None:
         **config.streamer.h264_gop._unpack(),
     )
 
+    hw_model = get_hw_model()
+    if hw_model == "rm4pe":
+        switch = Switch(
+            pst_unix_path=global_config.pst.server.unix,
+            **config.switch._unpack(),
+        )
+    else:
+        switch = None
+
     KvmdServer(
         auth_manager=AuthManager(
             enabled=config.auth.enabled,
@@ -96,17 +117,20 @@ def main(argv: (list[str] | None)=None) -> None:
             rate_limit_max_attempts=config.auth.rate_limit.max_attempts,
             rate_limit_time_window=config.auth.rate_limit.time_window,
             rate_limit_lockout_duration=config.auth.rate_limit.lockout_duration,
+
+            two_step_login_enabled=config.auth.two_step_login.enabled,
         ),
         init_manager=InitManager(),
         info_manager=InfoManager(global_config),
         log_reader=(LogReader() if config.log_reader.enabled else None),
         user_gpio=UserGpio(config.gpio, global_config.otg),
         ocr=Ocr(**config.ocr._unpack()),
-        switch=None,
-
-
-
-
+        #switch=None,
+        # switch=Switch(
+        #     pst_unix_path=global_config.pst.server.unix,
+        #     **config.switch._unpack(),
+        # ),
+        switch=switch,
 
         hid=hid,
         atx=get_atx_class(config.atx.type)(**config.atx._unpack(ignore=["type"])),
@@ -124,6 +148,7 @@ def main(argv: (list[str] | None)=None) -> None:
         keymap_path=config.hid.keymap,
 
         stream_forever=config.streamer.forever,
+
     ).run(**config.server._unpack())
 
     get_logger(0).info("Bye-bye")

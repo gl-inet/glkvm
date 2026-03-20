@@ -6,7 +6,7 @@ export function Upgrade() {
     self.init = function() {
         // 获取版本信息(最优先执行)
         self.compareVersions();
-
+        
         // 使用 document.getElementById 替代 tools.$
         self.selectButton = document.getElementById("upgrade-select-button");
         self.downloadButton = document.getElementById("upgrade-download-button");
@@ -16,7 +16,7 @@ export function Upgrade() {
         self.messageDownloading = document.getElementById("upgrade-message-downloading");
         self.messageVersion = document.getElementById("upgrade-message-version");
         self.localModel = document.getElementById("upgrade-local-model");
-        self.localVersion = document.getElementById("upgrade-local-version");
+        self.localVersion = document.getElementById("upgrade-local-version"); 
         self.serverModel = document.getElementById("upgrade-server-model");
         self.serverVersion = document.getElementById("upgrade-server-version");
 
@@ -28,52 +28,52 @@ export function Upgrade() {
                 }
             };
         }
-
+        
         if (self.downloadButton) {
             self.downloadButton.onclick = () => self.downloadFirmware();
         }
-
+        
         if (self.startButton) {
             self.startButton.onclick = () => self.startUpgrade();
         }
-
+        
         if (self.fileInput) {
             self.fileInput.onchange = (event) => self.handleFileSelect(event);
         }
     };
 
     self.compareVersions = function() {
-        tools.httpGet("/api/upgrade/compare",
+        tools.httpGet("/api/upgrade/compare", 
             function(response) {  // callback
                 try {
                     // 解析响应JSON
                     const result = JSON.parse(response.responseText);
                     const compare_result = result.result;
-
+                    
                     if (result.error) {
                         tools.error("Failed to compare versions: " + result.error);
                         return;
                     }
-
+                    
                     // 获取元素(因为此时可能还没有执行init的其他部分)
                     const localModel = document.getElementById("upgrade-local-model");
                     const localVersion = document.getElementById("upgrade-local-version");
                     const serverModel = document.getElementById("upgrade-server-model");
                     const serverVersion = document.getElementById("upgrade-server-version");
                     const messageVersion = document.getElementById("upgrade-message-version");
-
+                    
                     if (localModel) localModel.innerHTML = compare_result.local_model || "Unknown";
                     if (localVersion) localVersion.innerHTML = compare_result.local_version || "Unknown";
                     if (serverModel) serverModel.innerHTML = compare_result.server_model || "Unknown";
                     if (serverVersion) serverVersion.innerHTML = compare_result.server_version || "Unknown";
-
+                    
                     // 显示版本信息区域
                     if (messageVersion) {
                         messageVersion.classList.remove("hidden");
                     }
-
+                    
                     // 如果有新版本可用,显示提示
-                    if (compare_result.local_version && compare_result.server_version &&
+                    if (compare_result.local_version && compare_result.server_version && 
                         compare_result.local_version !== compare_result.server_version) {
                         tools.info("New firmware version available: " + compare_result.server_version);
                     }
@@ -91,7 +91,7 @@ export function Upgrade() {
 
         self.messageUploading.classList.remove("hidden");
         self.selectButton.disabled = true;
-
+        
         // 创建并显示进度条
         const progressBar = document.createElement("div");
         progressBar.className = "progress-bar";
@@ -99,14 +99,14 @@ export function Upgrade() {
             <div class="progress-value"></div>
         `;
         self.messageUploading.appendChild(progressBar);
-
+        
         const formData = new FormData();
         formData.append("file", file);
 
         // 创建 XHR 请求以支持进度监控
         const xhr = new XMLHttpRequest();
         xhr.open("POST", "/api/upgrade/upload", true);
-
+        
         // 监听上传进度
         xhr.upload.onprogress = function(e) {
             if (e.lengthComputable) {
@@ -114,31 +114,31 @@ export function Upgrade() {
                 tools.progress.setValue(progressBar, `Uploading: ${file.name}`, percent);
             }
         };
-
+        
         // 处理请求完成
         xhr.onload = function() {
             self.messageUploading.classList.add("hidden");
             self.selectButton.disabled = false;
-
+            
             try {
                 const response = JSON.parse(xhr.responseText);
                 if (response.error) {
                     tools.error("Firmware upload failed: " + response.error);
                     return;
                 }
-
+                
                 // 显示上传成功信息
                 tools.info(`Firmware ${file.name} (${tools.formatSize(response.size)}) uploaded successfully`);
                 self.startButton.disabled = false;
-
+                
             } catch (error) {
                 tools.error("Failed to parse response: " + error);
             }
-
+            
             // 清理进度条
             progressBar.remove();
         };
-
+        
         // 处理上传错误
         xhr.onerror = function() {
             self.messageUploading.classList.add("hidden");
@@ -146,7 +146,7 @@ export function Upgrade() {
             tools.error("Network error occurred during firmware upload");
             progressBar.remove();
         };
-
+        
         // 开始上传
         xhr.send(formData);
     };
@@ -172,11 +172,11 @@ export function Upgrade() {
             </div>
         `;
 
-        tools.httpPost("/api/upgrade/start",
+        tools.httpPost("/api/upgrade/start", 
             function(response) {  // callback
                 try {
                     const result = JSON.parse(response.responseText);
-
+                    
                     if (result.ok && result.result.status === "Upgrade started") {
                         // Upgrade success
                         statusMessage.innerHTML = `
@@ -187,12 +187,12 @@ export function Upgrade() {
                             </div>
                         `;
                         tools.info("Upgrade started, device will reboot soon...");
-
+                        
                         // 3秒后自动刷新页面
                         setTimeout(() => {
                             window.location.reload();
                         }, 3000);
-
+                        
                     } else {
                         // 升级失败
                         statusMessage.innerHTML = `
@@ -227,7 +227,7 @@ export function Upgrade() {
         self.messageDownloading.classList.remove("hidden");
         self.downloadButton.disabled = true;
         self.selectButton.disabled = true;
-
+        
         // 创建并显示进度条
         const progressBar = document.createElement("div");
         progressBar.className = "progress-bar";
@@ -241,7 +241,7 @@ export function Upgrade() {
         }).then(response => {
             const reader = response.body.getReader();
             let receivedLength = 0;
-
+            
             // 读取流数据
             function readStream() {
                 reader.read().then(({done, value}) => {
@@ -258,10 +258,10 @@ export function Upgrade() {
                     const text = new TextDecoder().decode(value);
                     const lines = text.trim().split('\n');
                     console.log("lines=",lines);
-
+                    
                     lines.forEach(line => {
                         if (!line) return;
-
+                        
                         try {
                             const data = JSON.parse(line);
                             if (data.firmware) {

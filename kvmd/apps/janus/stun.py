@@ -76,10 +76,10 @@ class Stun:
         nat_type = StunNatType.ERROR
         ext_ip = ""
         try:
-
+            # 强制使用IPv4地址族
             src_fam = socket.AF_INET
-
-
+            
+            # 只在没有缓存IP时才进行DNS解析
             if not self.__stun_ip:
                 stun_ips = [
                     stun_addr[0]
@@ -99,7 +99,7 @@ class Stun:
                 (nat_type, resp) = await self.__get_nat_type(src_ip)
                 ext_ip = (resp.ext.ip if resp.ext is not None else "")
             '''
-
+            # use pystun3 get NAT info，使用已解析的IP而不是域名
             _nat_type, ext_ip, ext_port = get_ip_info(stun_host=self.__stun_ip, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
 
             value_to_member_map = {member.value: member for member in StunNatType}
@@ -109,17 +109,17 @@ class Stun:
                 nat_type = ""
                 get_logger(0).error("StunNatType value to member map error!")
 
-
-
+            # debug
+            # get_logger(0).info("StunInfo: %s", StunInfo(nat_type=nat_type, src_ip=src_ip, ext_ip=ext_ip, stun_ip=self.__stun_ip, stun_port=self.__port))
         except Exception as ex:
             get_logger(0).error("Can't get STUN info: %s", tools.efmt(ex))
-
+            # 如果STUN查询失败，可能是DNS解析的IP有问题，清除缓存的IP以便下次重新解析
             if self.__stun_ip:
                 self.__stun_ip = ""
         finally:
             self.__sock = None
 
-
+        # 如果ext_ip为空，则清除缓存的IP以便下次重新解析
         if not ext_ip:
             self.__stun_ip = ""
 

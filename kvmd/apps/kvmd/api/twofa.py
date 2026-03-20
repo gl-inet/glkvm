@@ -1,23 +1,23 @@
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+# ========================================================================== #
+#                                                                            #
+#    KVMD - The main PiKVM daemon.                                           #
+#                                                                            #
+#    Copyright (C) 2018-2024  Maxim Devaev <mdevaev@gmail.com>               #
+#                                                                            #
+#    This program is free software: you can redistribute it and/or modify    #
+#    it under the terms of the GNU General Public License as published by    #
+#    the Free Software Foundation, either version 3 of the License, or       #
+#    (at your option) any later version.                                     #
+#                                                                            #
+#    This program is distributed in the hope that it will be useful,         #
+#    but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#    GNU General Public License for more details.                            #
+#                                                                            #
+#    You should have received a copy of the GNU General Public License       #
+#    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
+#                                                                            #
+# ========================================================================== #
 
 
 
@@ -37,7 +37,7 @@ class TwoFaApi:
     def __init__(self) -> None:
         pass
 
-
+    # =====
 
     @exposed_http("GET", "/2fa/create")
     async def __create_handler(self, req: Request) -> Response:
@@ -64,7 +64,7 @@ class TwoFaApi:
             key = req.query.get("key", "")
             if secret == "":
                 return make_json_exception(ForbiddenError(),403)
-
+            
             if pyotp.TOTP(secret).verify(key):
                 file.write(secret)
             else:
@@ -79,7 +79,7 @@ class TwoFaApi:
                 return make_json_exception(NotFoundError(),404)
             uri = pyotp.TOTP(secret).provisioning_uri(name="GLKVM", issuer_name="GLKVM")
         return make_json_response({"URI": uri})
-
+    
     @exposed_http("GET", "/2fa/is_enabled", auth_required=False)
     async def __is_enabled_handler(self, req: Request) -> Response:
         try:

@@ -91,32 +91,32 @@ class ExtrasInfoSubmanager(BaseInfoSubmanager):
             return {}
 
     async def __rewrite_app_daemon(self, sui: (sysunit.SystemdUnitInfo | None), extra: dict) -> None:
-
+        # 获取守护进程名称
         daemon = extra.get("daemon", "")
-
-
-
+        # 打印守护进程名称,用于调试
+        # TODO: 这里得最后看看怎么弄,是吧systemd调出来,还是修改获取状态的函数
+        # 已经确定无法引入systemd
         print("=============" + daemon + "===============")
 
-
+        # 检查守护进程名称是否为非空字符串
         if isinstance(daemon, str) and daemon.strip():
-
+            # 初始化启用和运行状态为False
             extra["enabled"] = extra["started"] = False
-
+            # 如果SystemdUnitInfo对象存在
             if sui is not None:
                 try:
-
+                    # 获取守护进程的启用和运行状态
                     (extra["enabled"], extra["started"]) = await sui.get_status(daemon)
-
-
-
-
-
+                    # 打印状态信息,用于调试
+                    # print("=============" + daemon + "===============")
+                    # print(extra["enabled"])
+                    # print(extra["started"])
+                    # print("============================")
                 except Exception as ex:
-
+                    # 如果获取状态失败,记录错误日志
                     get_logger(0).error("无法获取服务 %r 的信息: %s", daemon, tools.efmt(ex))
             else:
-
+                # 强制配置为enable started, 暂时禁止ipmi 和 vnc
                 if "vnc" in daemon or "ipmi" in daemon:
                     extra["enabled"] = extra["started"] = False
                 else:

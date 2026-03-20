@@ -135,8 +135,8 @@ class MouseButtonEvent(BaseEvent):
             ecodes.BTN_LEFT:    (0b10000000, 0b00001000, True),
             ecodes.BTN_RIGHT:   (0b01000000, 0b00000100, True),
             ecodes.BTN_MIDDLE:  (0b00100000, 0b00000010, True),
-            ecodes.BTN_BACK:    (0b10000000, 0b00001000, False),
-            ecodes.BTN_FORWARD: (0b01000000, 0b00000100, False),
+            ecodes.BTN_BACK:    (0b10000000, 0b00001000, False),  # Up
+            ecodes.BTN_FORWARD: (0b01000000, 0b00000100, False),  # Down
         }[self.code]
         if self.state:
             code |= state_pressed

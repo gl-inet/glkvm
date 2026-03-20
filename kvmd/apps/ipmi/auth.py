@@ -58,7 +58,7 @@ class IpmiAuthManager:
         with open(self.__path) as file:
             creds: dict[str, str] = {}
             for (lineno, line) in tools.passwds_splitted(file.read()):
-                if " -> " in line:
+                if " -> " in line:  # Compatibility with old ipmipasswd file format
                     line = line.split(" -> ", 1)[0]
 
                 if ":" not in line:

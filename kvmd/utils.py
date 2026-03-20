@@ -1,4 +1,4 @@
-/*****************************************************************************
+# ========================================================================== #
 #                                                                            #
 #    KVMD - The main PiKVM daemon.                                           #
 #                                                                            #
@@ -17,35 +17,44 @@
 #    You should have received a copy of the GNU General Public License       #
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.  #
 #                                                                            #
-*****************************************************************************/
+# ========================================================================== #
 
 
-div#text-menu {
-	width: 340px;
-}
+import sys
+import types
 
-textarea#hid-pak-text {
-	display: block;
-	resize: none;
-	height: 120px;
-	width: 100%;
-	border: var(--border-default-thin);
-	border-radius: 4px;
-	color: var(--cs-code-default-fg);
-	background-color: var(--cs-code-default-bg);
-	-webkit-appearance:none;
-}
 
-textarea#hid-pak-text::-moz-placeholder {
-	line-height: 60px;
-	text-align: center;
-}
 
-textarea#hid-pak-text::-webkit-input-placeholder {
-	line-height: 60px;
-	text-align: center;
-}
+MODEL_PATH = "/proc/gl-hw-info/model"
 
-input#hid-recorder-new-script-file {
-	display: none;
-}
+def get_model_name() -> str:
+    try:
+        with open(MODEL_PATH, "r") as f:
+            return f.read().strip()
+    except Exception as e:
+        get_logger(0).warning(f"Failed to read model info, using default value rm10: {str(e)}")
+        return "rm10"
+
+
+def parse_user_agent(ua_string: str) -> tuple[str, str]:
+    """解析 User-Agent 字符串，返回 (device_type, browser)。
+
+    device_type: "Mobile" | "Tablet" | "PC" | "Unknown"
+    browser:     浏览器名称，如 "Chrome"、"Safari"，解析失败时为 "Unknown"
+    """
+    try:
+        import user_agents  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return ("Unknown", "Unknown")
+
+    ua = user_agents.parse(ua_string)
+    if ua.is_mobile:
+        device_type = "Mobile"
+    elif ua.is_tablet:
+        device_type = "Tablet"
+    elif ua.is_pc:
+        device_type = "PC"
+    else:
+        device_type = "Unknown"
+    browser = ua.browser.family or "Unknown"
+    return (device_type, browser)
