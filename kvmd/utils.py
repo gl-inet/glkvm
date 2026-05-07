@@ -36,12 +36,21 @@ def get_model_name() -> str:
         return "rm10"
 
 
+_MOBILE_APP_UA = {"AndroidMobileApp", "IOSMobileApp"}
+_DESKTOP_APP_UA = {"MacDesktopApp", "WinDesktopApp"}
+
+
 def parse_user_agent(ua_string: str) -> tuple[str, str]:
     """解析 User-Agent 字符串，返回 (device_type, browser)。
 
     device_type: "Mobile" | "Tablet" | "PC" | "Unknown"
     browser:     浏览器名称，如 "Chrome"、"Safari"，解析失败时为 "Unknown"
     """
+    if ua_string in _MOBILE_APP_UA:
+        return ("Mobile", ua_string)
+    if ua_string in _DESKTOP_APP_UA:
+        return ("PC", ua_string)
+
     try:
         import user_agents  # pylint: disable=import-outside-toplevel
     except ImportError:

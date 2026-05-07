@@ -110,6 +110,8 @@ export function Streamer() {
 			__sendParam("zero_delay", zero_delay);
 		});
 
+		tools.radio.setOnClick("stream-venc-mode-radio", __clickVencModeRadio, false);
+
 		tools.el.setOnClick($("stream-screenshot-button"), __clickScreenshotButton);
 		tools.el.setOnClick($("stream-reset-button"), __clickResetButton);
 
@@ -266,6 +268,12 @@ export function Streamer() {
 				tools.storage.setBool("stream.zero_delay", params.zero_delay);
 			}
 
+			// 同步 venc_mode 状态
+			if (params && params.venc_mode !== undefined) {
+				tools.radio.setValue("stream-venc-mode-radio", params.venc_mode);
+				tools.storage.set("stream.venc_mode", params.venc_mode);
+			}
+
 			tools.feature.setEnabled($("stream-quality"), (s.encoder.quality > 0));
 
 			if (params && params.video_format !== undefined) {
@@ -370,6 +378,12 @@ export function Streamer() {
 	var __clickVideoFormatRadio = function() {
 		let video_format = parseInt(tools.radio.getValue("stream-video-format-radio"));
 		__sendParam("video_format", video_format);
+	};
+
+	var __clickVencModeRadio = function() {
+		let venc_mode = tools.radio.getValue("stream-venc-mode-radio");
+		tools.storage.set("stream.venc_mode", venc_mode);
+		__sendParam("venc_mode", venc_mode);
 	};
 
 	var __clickScreenshotButton = function() {

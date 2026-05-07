@@ -128,6 +128,19 @@ li.right#system-dropdown
 			tr.feature-disabled#hid-jiggler
 				+menu_switch_td2("hid-jiggler-switch", false, false)
 					| #[a(target="_blank" href="https://docs.pikvm.org/mouse_jiggler") Mouse jiggler]:
+			tr.feature-disabled#hid-jiggler-schedule
+				td(colspan="2")
+					details
+						summary Jiggler schedule
+						.spoiler
+							#hid-jiggler-schedule-list
+							.buttons.buttons-row(style="margin-top:4px")
+								input(type="time" id="hid-jiggler-schedule-start" disabled style="width:90px")
+								|  ~
+								input(type="time" id="hid-jiggler-schedule-end" disabled style="width:90px")
+								button#hid-jiggler-schedule-add(disabled) + Add
+							div(style="margin-top:4px; text-align:right")
+								button#hid-jiggler-schedule-save(disabled) Save schedule
 			tr
 				+menu_switch_td2("hid-mute-switch", true, false) Mute all input HID events:
 			tr.feature-disabled#v3-usb-breaker

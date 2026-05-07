@@ -25,6 +25,8 @@ class Device:
 
     # ===== 固定 sysfs 路径 =====
     CHANNEL_FILE = Path("/sys/bus/i2c/devices/3-0058/channel")
+    USB_HOST_POWER_FILE = Path("/sys/bus/i2c/devices/3-0058/usb_host_power")
+    USB_HOST_CHANNEL_FILE = Path("/sys/bus/i2c/devices/3-0058/usb_host_channel")
     HDMI_STATUS_FILE = Path("/sys/bus/i2c/devices/3-0058/hdmi_status")
     USB_STATUS_FILE = Path("/sys/bus/i2c/devices/3-0058/usb_otg_status")
 
@@ -134,11 +136,37 @@ class Device:
             raise DeviceError(f"Invalid channel format: {text}")
 
     def set_channel(self, ch: int) -> None:
+        device_id   = '21500000.usb'
         ch = int(ch)
         if not 0 <= ch <= 3:
             raise ValueError(f"invalid channel: {ch}")
         self.CHANNEL_FILE.write_text(str(ch))
-        self.__save_channel(int(ch))
+        
+        # 1. 先解绑 USB 设备，让驱动停止所有传输（EHCI 唯一安全方法）
+        switch_cmd = (
+            f"echo {device_id} > /sys/bus/platform/drivers/dwc3/unbind && "
+            "echo -n 2-1 > /sys/bus/usb/drivers/usb/unbind && "
+            "sleep 0.5 && "
+            "echo 0 > /sys/bus/i2c/devices/3-0058/usb_host_power && "
+            "sleep 1 && "
+            f"echo {ch} > /sys/bus/i2c/devices/3-0058/usb_host_channel && "
+            "sleep 0.8 && "
+            f"echo {device_id} > /sys/bus/platform/drivers/dwc3/bind && "
+            "echo -n 2-1 > /sys/bus/usb/drivers/usb/bind"
+        )
+        result = subprocess.run(
+            switch_cmd,
+            shell=True,
+            text=True,
+            capture_output=True,
+            timeout=None,
+            check=False,
+        )
+
+        try:
+            pass
+        finally:
+            self.__save_channel(ch)
 
     # ------------------------------------------------------------------
     # HDMI status
@@ -221,7 +249,7 @@ class Device:
         }
         
         # if x_usb:
-        usb_status = self.get_usb_status()
+        usb_status = self.get_usb_otg_status()
         state["usb"] = {"links": [usb_status.get(ch, False) for ch in range(self.__channel_count)]}
         # if x_video:
         hdmi_status = self.get_hdmi_status()

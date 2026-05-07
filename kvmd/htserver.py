@@ -188,7 +188,7 @@ def make_json_response(
     resp = Response(
         text=json.dumps(({
             "ok": (status == 200),
-            "result": (result or {}),
+            "result": (result if result is not None else {}),
         } if wrap_result else result), sort_keys=True, indent=4),
         status=status,
         content_type="application/json",

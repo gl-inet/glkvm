@@ -21,6 +21,7 @@
 
 
 import asyncio
+import datetime
 import functools
 import time
 
@@ -30,6 +31,8 @@ from typing import AsyncGenerator
 from typing import Any
 
 from evdev import ecodes
+
+from ...logging import get_logger
 
 from ...yamlconf import Option
 
@@ -75,6 +78,9 @@ class BaseHid(BasePlugin):  # pylint: disable=too-many-instance-attributes
         self.__j_activity_ts = 0
         self.__j_last_x = 0
         self.__j_last_y = 0
+        self.__j_schedule: list[dict] = []
+        self.__j_in_schedule = False
+        self.__j_button_active = jiggler_active  # 追踪按钮的决定
 
     @classmethod
     def _get_base_options(cls) -> dict[str, Any]:
@@ -255,8 +261,21 @@ class BaseHid(BasePlugin):  # pylint: disable=too-many-instance-attributes
         self.__j_absolute = absolute
 
     def _set_jiggler_active(self, active: bool) -> None:
+        """设置按钮决定的 jiggler 状态"""
         if self.__j_enabled:
-            self.__j_active = active
+            self.__j_button_active = active
+            self.__update_jiggler_active()
+
+    def __update_jiggler_active(self) -> None:
+        """计算最终 jiggler 状态：OR 逻辑 - 任一方开启则开启"""
+        new_active = self.__j_button_active or self.__j_in_schedule
+        if self.__j_enabled and self.__j_active != new_active:
+            logger = get_logger()
+            if new_active:
+                logger.info("Mouse jiggler started")
+            else:
+                logger.info("Mouse jiggler stopped")
+            self.__j_active = new_active
 
     def _get_jiggler_state(self) -> dict:
         return {
@@ -264,13 +283,48 @@ class BaseHid(BasePlugin):  # pylint: disable=too-many-instance-attributes
                 "enabled":  self.__j_enabled,
                 "active":   self.__j_active,
                 "interval": self.__j_interval,
+                "schedule": list(self.__j_schedule),
             },
         }
+
+    def set_jiggler_schedule(self, periods: list[dict]) -> None:
+        self.__j_schedule = list(periods)
+        # schedule 被修改后，重新计算状态
+        self.__j_in_schedule = self.__is_in_schedule()
+        self.__update_jiggler_active()
+
+    def __is_in_schedule(self) -> bool:
+        if not self.__j_schedule:
+            return False
+        now = datetime.datetime.now()
+        current_min = now.hour * 60 + now.minute
+        for period in self.__j_schedule:
+            start_h, start_m = map(int, period["start"].split(":"))
+            end_h, end_m = map(int, period["end"].split(":"))
+            start_min = start_h * 60 + start_m
+            end_min = end_h * 60 + end_m
+            if start_min <= end_min:
+                # 普通时间段，如 09:00-18:00
+                if start_min <= current_min < end_min:
+                    return True
+            else:
+                # 跨午夜时间段，如 22:00-06:00
+                if current_min >= start_min or current_min < end_min:
+                    return True
+        return False
 
     # =====
 
     async def systask(self) -> None:
         while True:
+            # 检查定时计划：在时间段转换时更新状态
+            if self.__j_schedule:
+                in_schedule = self.__is_in_schedule()
+                if in_schedule != self.__j_in_schedule:
+                    self.__j_in_schedule = in_schedule
+                    self.__update_jiggler_active()
+                    await self.trigger_state()
+
             if self.__j_active and (self.__j_activity_ts + self.__j_interval < int(time.monotonic())):
                 if self.__j_absolute:
                     (x, y) = (self.__j_last_x, self.__j_last_y)

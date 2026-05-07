@@ -130,7 +130,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
     mount_dict = {}
     if model_name == "rmq1":
         mount_dict = {
-            "/dev/mmcblk0p18": "/userdata/media",
+            "/dev/mtdblock10": "/userdata/media",
             "/dev/block/by-name/media": "/userdata/media",
         }
     else:
@@ -139,15 +139,18 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
             "/dev/block/by-name/media": "/userdata/media",
         }
     
+    def get_storage_root(self) -> str:
+        return self.get_mount_path(self.__partition_device)
+
     def get_mount_path(self, device_path: str) -> str:
         # 如果设备路径直接在mount_dict中，返回对应的挂载点
         if device_path in self.mount_dict:
             return self.mount_dict[device_path]
-        
+
         # 如果设备路径匹配/dev/sdxx模式，返回/mnt/sdcard/
         if device_path.startswith("/dev/sd"):
             return "/mnt/sdcard/"
-            
+
         # 默认返回None
         return None
 
@@ -180,7 +183,16 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         self.__read_chunk_size = read_chunk_size
         self.__write_chunk_size = write_chunk_size
         self.__sync_chunk_size = sync_chunk_size
-        self.__partition_device = os.path.realpath(partition_device)
+        resolved = os.path.realpath(partition_device)
+        if os.path.exists(resolved):
+            self.__partition_device = resolved
+        else:
+            default_device = "/dev/block/by-name/media"
+            get_logger(0).warning(
+                "Partition device %r (resolved: %r) does not exist, falling back to default %r",
+                partition_device, resolved, default_device,
+            )
+            self.__partition_device = default_device
 
         self.__initial_image: str = initial["image"]
         self.__initial_cdrom: bool = initial["cdrom"]
@@ -497,7 +509,7 @@ class Plugin(BaseMsd):  # pylint: disable=too-many-instance-attributes
         current_partition = os.path.realpath(self.__partition_device)
 
         if model_name == "rmq1":
-            MEDIA_PART_NAME = "mmcblk0p16"
+            MEDIA_PART_NAME = "mtdblock10"
         else:
             MEDIA_PART_NAME = "mmcblk0p10"
 

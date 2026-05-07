@@ -302,6 +302,18 @@
                     </div>
                   </td>
             </tr>
+            <tr id="stream-venc-mode">
+                  <td>Venc Mode:
+                  </td>
+                  <td>
+                    <div class="radio-box">
+                      <input type="radio" id="stream-venc-mode-radio-smart" name="stream-venc-mode-radio" value="smart" checked>
+                      <label for="stream-venc-mode-radio-smart">Smart</label>
+                      <input type="radio" id="stream-venc-mode-radio-normal" name="stream-venc-mode-radio" value="normal">
+                      <label for="stream-venc-mode-radio-normal">Normal</label>
+                    </div>
+                  </td>
+            </tr>
           </table>
           <hr>
           <div class="buttons buttons-row">
@@ -480,6 +492,25 @@
                       <input disabled type="checkbox" id="hid-jiggler-switch">
                       <label for="hid-jiggler-switch"><span class="switch-inner"></span><span class="switch"></span></label>
                     </div>
+                  </td>
+            </tr>
+            <tr class="feature-disabled" id="hid-jiggler-schedule">
+                  <td colspan="2">
+                    <details>
+                      <summary>Jiggler schedule</summary>
+                      <div class="spoiler">
+                        <div id="hid-jiggler-schedule-list"></div>
+                        <div class="buttons buttons-row" style="margin-top:4px">
+                          <input type="time" id="hid-jiggler-schedule-start" disabled style="width:90px">
+                           ~
+                          <input type="time" id="hid-jiggler-schedule-end" disabled style="width:90px">
+                          <button id="hid-jiggler-schedule-add" disabled>+ Add</button>
+                        </div>
+                        <div style="margin-top:4px; text-align:right">
+                          <button id="hid-jiggler-schedule-save" disabled>Save schedule</button>
+                        </div>
+                      </div>
+                    </details>
                   </td>
             </tr>
             <tr>

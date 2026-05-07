@@ -103,7 +103,7 @@ def valid_stream_video_format(arg: Any) -> str:
 
 
 def valid_stream_h264_bitrate(arg: Any) -> int:
-    return int(valid_number(arg, min=25, max=20000, name="stream H264 bitrate"))
+    return int(valid_number(arg, min=0, max=20000, name="stream H264 bitrate"))
 
 
 def valid_stream_h264_gop(arg: Any) -> int:
@@ -113,3 +113,7 @@ def valid_stream_h264_gop(arg: Any) -> int:
 def valid_stream_zero_delay(arg: Any) -> bool:
     from .basic import valid_bool
     return valid_bool(arg)
+
+
+def valid_stream_venc_mode(arg: Any) -> str:
+    return check_string_in_list(arg, "stream venc mode", ["smart", "normal"])

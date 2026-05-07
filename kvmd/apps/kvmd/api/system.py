@@ -71,7 +71,7 @@ class SystemApi:
         self._close_ws = close_ws_callback
         self._logout = logout_callback
         self._config_path = "/etc/kvmd/user/boot.yaml"
-
+        self._privacy_path = "/etc/kvmd/user/privacy"
         self._user_config_path = "/etc/kvmd/user/config.json"
         self._network_config_path = "/etc/kvmd/user/network.json"
         self._ssl_dir = "/etc/kvmd/user/ssl"
@@ -81,6 +81,11 @@ class SystemApi:
         self._ssl_key_default_path = "/etc/kvmd/user/ssl/server.key.default"
         self._usb_pid_path = "/proc/gl-hw-info/usb_pid"
         self._capability_path = "/proc/gl-hw-info/capability"
+
+        self.__otg_lock = asyncio.Lock()
+
+        # 服务启动时强制重置隐私状态，确保开机默认关闭
+        ##self._reset_privacy_state_on_startup()
 
         # 支持的参数验证器映射
         self._param_validators = {
@@ -639,6 +644,65 @@ class SystemApi:
         except Exception as e:
             raise BadRequestError(f"Cannot write config file: {e}")
 
+    def _read_privacy_state(self) -> Dict[str, bool]:
+        """读取隐私状态文件"""
+        state = {
+            "privacy_enable": False,
+            "privacy_restore": False,
+        }
+
+        try:
+            if not os.path.exists(self._privacy_path):
+                return state
+
+            with open(self._privacy_path, "r") as f:
+                content = f.read().strip()
+
+            if not content:
+                return state
+
+            # 单整数位掩码：bit1(2)=privacy_enable, bit0(1)=privacy_restore
+            privacy_flags = int(content, 10)
+            return {
+                "privacy_enable": bool(privacy_flags & 0x2),
+                "privacy_restore": bool(privacy_flags & 0x1),
+            }
+        except ValueError:
+            self._logger.warning(f"Invalid privacy bitmask in {self._privacy_path}, keep default")
+            return state
+        except Exception as e:
+            self._logger.warning(f"Cannot read privacy file {self._privacy_path}: {e}")
+            return state
+
+    async def _write_privacy_state(self, state: Dict[str, bool]) -> None:
+        """写入隐私状态文件，供其他进程实时读取"""
+        try:
+            os.makedirs(os.path.dirname(self._privacy_path), exist_ok=True)
+            tmp_path = f"{self._privacy_path}.tmp"
+            privacy_flags = (
+                (0x2 if state.get("privacy_enable", False) else 0)
+                | (0x1 if state.get("privacy_restore", False) else 0)
+            )
+            with open(tmp_path, "w") as f:
+                f.write(f"{privacy_flags}\n")
+            os.replace(tmp_path, self._privacy_path)
+            await run_shell("sync")
+        except Exception as e:
+            self._logger.error(f"Cannot write privacy file {self._privacy_path}: {e}")
+            raise BadRequestError("Cannot write privacy state")
+
+    def _reset_privacy_state_on_startup(self) -> None:
+        """启动时重置隐私状态为 0，确保默认值一致"""
+        try:
+            os.makedirs(os.path.dirname(self._privacy_path), exist_ok=True)
+            tmp_path = f"{self._privacy_path}.tmp"
+            with open(tmp_path, "w") as f:
+                f.write("0\n")
+            os.replace(tmp_path, self._privacy_path)
+            self._logger.info(f"Reset privacy state to 0 on startup: {self._privacy_path}")
+        except Exception as e:
+            self._logger.warning(f"Failed to reset privacy state on startup: {e}")
+
     def _get_nested_value(self, data: Dict, path: str, default: Any = None) -> Any:
         """获取嵌套字典中的值（委托给 config_utils）"""
         return _get_nested_value_util(data, path, default)
@@ -652,6 +716,7 @@ class SystemApi:
         """获取系统参数处理器"""
         try:
             data = await self._read_yaml()
+            privacy_state = self._read_privacy_state()
 
             # 从 /proc/gl-hw-info/usb_pid 读取 product_id，如果读取失败则使用配置文件中的值
             usb_pid_from_proc = self._read_usb_pid()
@@ -661,7 +726,6 @@ class SystemApi:
                 "success": True,
                 "absolute_mouse": self._get_nested_value(data, "kvmd/hid/mouse/absolute", True),
                 "msd_partition": self._get_nested_value(data, "kvmd/msd/partition_device", "/dev/block/by-name/media"),
-                "msd_type": self._get_nested_value(data, "kvmd/msd/type", "otg"),
                 # 新增 OTG 相关参数
                 "otg_manufacturer": self._get_nested_value(data, "otg/manufacturer", "Glinet"),
                 "otg_product": self._get_nested_value(data, "otg/product", "Glinet Composite Device"),
@@ -670,11 +734,13 @@ class SystemApi:
                 "otg_serial": self._get_nested_value(data, "otg/serial", ""),
                 "cdrom_vendor": self._get_nested_value(data, "otg/devices/msd/default/inquiry_string/cdrom/vendor", "Glinet"),
                 "flash_vendor": self._get_nested_value(data, "otg/devices/msd/default/inquiry_string/flash/vendor", "Glinet"),
-                # 新增麦克风参数
-                "enable_mic": self._get_nested_value(data, "otg/devices/audio/enabled", False),
                 "mic_name": self._get_nested_value(data, "otg/devices/audio/product", "Comet Microphone"),
                 "default_product_id": self._int_to_hex_str(usb_pid_from_proc),
                 "default_vendor_id": self._int_to_hex_str(14571),
+
+                # 新增隐私屏参数
+                "privacy_enable": privacy_state["privacy_enable"],
+                "privacy_restore": privacy_state["privacy_restore"],
             })
 
         except BadRequestError as e:
@@ -683,6 +749,11 @@ class SystemApi:
             self._logger.error(f"Error getting system parameters: {e}")
             return make_json_exception(BadRequestError("Error getting system parameters"), 502)
 
+    @exposed_http("GET", "/system/gui_get_param", allowed_exe_paths=["/usr/sbin/gl_kvm_gui"])
+    async def gui_get_param_handler(self, request: Request) -> Response:
+        """GUI 获取系统参数处理器"""
+        return await self.get_param_handler(request)
+
     @exposed_http("POST", "/system/set_param")
     async def set_param_handler(self, request: Request) -> Response:
         """设置系统参数处理器"""
@@ -690,7 +761,6 @@ class SystemApi:
             # 获取请求参数
             absolute_mouse = request.query.get("absolute_mouse")
             msd_partition = request.query.get("msd_partition")
-            msd_type = request.query.get("msd_type")
             # 新增 OTG 相关参数
             otg_manufacturer = request.query.get("otg_manufacturer")
             otg_product = request.query.get("otg_product")
@@ -699,13 +769,14 @@ class SystemApi:
             otg_serial = request.query.get("otg_serial")
             cdrom_vendor = request.query.get("cdrom_vendor")
             flash_vendor = request.query.get("flash_vendor")
-            # 新增麦克风参数
-            enable_mic = request.query.get("enable_mic")
             mic_name = request.query.get("mic_name")
+            
+            privacy_enable = request.query.get("privacy_enable")
+            privacy_restore = request.query.get("privacy_restore")
 
             # 读取当前配置
             data = await self._read_yaml()
-
+            
             # 标记是否修改了 OTG 相关参数（需要重启 UDC 才能生效）
             otg_changed = False
             
@@ -721,11 +792,6 @@ class SystemApi:
                 if not msd_partition.strip():
                     raise BadRequestError("msd_partition parameter cannot be empty")
                 self._set_nested_value(data, "kvmd/msd/partition_device", msd_partition)
-
-            if msd_type is not None:
-                if msd_type not in ["otg","disabled"]:
-                    raise BadRequestError("msd_type param invalid, must be 'otg' or 'disabled'")
-                self._set_nested_value(data, "kvmd/msd/type", msd_type)
 
             # 设置 OTG 相关参数
             if otg_manufacturer is not None:
@@ -753,13 +819,6 @@ class SystemApi:
                 self._set_nested_value(data, "otg/devices/msd/default/inquiry_string/flash/vendor", flash_vendor)
                 otg_changed = True
 
-            # 设置麦克风参数
-            if enable_mic is not None:
-                enable_mic = valid_bool(enable_mic)
-                self._set_nested_value(data, "otg/devices/audio/enabled", enable_mic)
-                if model_name == "rmq1":
-                    self._set_nested_value(data, "otg/devices/rndis/enabled", not enable_mic)
-
             if mic_name is not None:
                 # 麦克风名字必须是非空的字符串
                 if not mic_name.strip():
@@ -769,10 +828,21 @@ class SystemApi:
             # 写入配置
             await self._write_yaml(data)
 
-            # 如果修改了 OTG 参数，通过 stop+start 重建 OTG gadget 以应用配置
+            # 如果修改了 OTG 描述符参数，通过 stop+start 重建 OTG gadget 以应用配置
             if otg_changed:
                 self._logger.info("OTG config changed, restarting OTG gadget to apply ...")
                 await self.__restart_otg()
+
+            if privacy_enable is not None or privacy_restore is not None:
+                async with self.__otg_lock:
+                    privacy_state = self._read_privacy_state()
+                    if privacy_enable is not None:
+                        privacy_state["privacy_enable"] = valid_bool(privacy_enable)
+                    if privacy_restore is not None:
+                        privacy_state["privacy_restore"] = valid_bool(privacy_restore)
+                    await self._write_privacy_state(privacy_state)
+            else:
+                privacy_state = self._read_privacy_state()
 
             # 从 /proc/gl-hw-info/usb_pid 读取 product_id
             usb_pid_from_proc = self._read_usb_pid()
@@ -782,7 +852,6 @@ class SystemApi:
                 "success": True,
                 "absolute_mouse": self._get_nested_value(data, "kvmd/hid/mouse/absolute", True),
                 "msd_partition": self._get_nested_value(data, "kvmd/msd/partition_device", "/dev/block/by-name/media"),
-                "msd_type": self._get_nested_value(data, "kvmd/msd/type", "otg"),
                 "otg_manufacturer": self._get_nested_value(data, "otg/manufacturer", "Glinet"),
                 "otg_product": self._get_nested_value(data, "otg/product", "Glinet Composite Device"),
                 "otg_vendor_id": self._int_to_hex_str(self._get_nested_value(data, "otg/vendor_id", 14571)),
@@ -790,15 +859,89 @@ class SystemApi:
                 "otg_serial": self._get_nested_value(data, "otg/serial", ""),
                 "cdrom_vendor": self._get_nested_value(data, "otg/devices/msd/default/inquiry_string/cdrom/vendor", "Glinet"),
                 "flash_vendor": self._get_nested_value(data, "otg/devices/msd/default/inquiry_string/flash/vendor", "Glinet"),
-                "enable_mic": self._get_nested_value(data, "otg/devices/audio/enabled", False),
-                "mic_name": self._get_nested_value(data, "otg/devices/audio/product", "Comet Microphone")
+                "mic_name": self._get_nested_value(data, "otg/devices/audio/product", "Comet Microphone"),
+                "privacy_enable": privacy_state["privacy_enable"],
+                "privacy_restore": privacy_state["privacy_restore"],
             })
-            
+
         except BadRequestError as e:
             return make_json_exception(e, 400)
         except Exception as e:
             self._logger.error(f"Error setting system parameters: {e}")
             return make_json_exception(BadRequestError(), 502)
+
+    @exposed_http("POST", "/system/gui_set_param", allowed_exe_paths=["/usr/sbin/gl_kvm_gui"])
+    async def gui_set_param_handler(self, request: Request) -> Response:
+        """GUI 设置系统参数处理器"""
+        return await self.set_param_handler(request)
+
+    # ===== OTG Function Toggle (link/unlink via kvmd-otgconf)
+
+    # 参数名 -> (yaml路径, 默认值, otgconf function名)
+    _OTG_FUNC_MAP = {
+        "enable_keyboard": ("otg/devices/hid/keyboard/start", True,  "hid.usb0"),
+        "enable_mouse":    ("otg/devices/hid/mouse/start",    True,  "hid.usb1"),
+        "enable_mouse_alt":("otg/devices/hid/mouse_alt/start",True,  "hid.usb2"),
+        "start_cdrom":     ("otg/devices/msd/start_cdrom",    False, "mass_storage.0"),
+        "start_flash":     ("otg/devices/msd/start_flash",    False, "mass_storage.1"),
+        "enable_mic":      ("otg/devices/audio/start",        False, "uac1.usb0" if model_name == "rmq1" else "uac2.usb0"),
+    }
+
+    @exposed_http("GET", "/system/otg_functions")
+    async def get_otg_functions_handler(self, request: Request) -> Response:
+        """获取 OTG function（HID/MSD/麦克风）的启用状态"""
+        try:
+            data = await self._read_yaml()
+            return make_json_response({
+                key: self._get_nested_value(data, yaml_path, default)
+                for key, (yaml_path, default, _) in self._OTG_FUNC_MAP.items()
+            })
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error getting OTG functions: {e}")
+            return make_json_exception(BadRequestError("Error getting OTG functions"), 502)
+
+    @exposed_http("POST", "/system/otg_functions")
+    async def set_otg_functions_handler(self, request: Request) -> Response:
+        """设置 OTG function（HID/MSD/麦克风）的启用状态，使用 kvmd-otgconf link/unlink"""
+        try:
+            async with self.__otg_lock:
+                data = await self._read_yaml()
+                funcs_to_enable: set[str] = set()
+                funcs_to_disable: set[str] = set()
+
+                for key, (yaml_path, default, func_name) in self._OTG_FUNC_MAP.items():
+                    raw = request.query.get(key)
+                    if raw is None:
+                        continue
+                    val = valid_bool(raw)
+                    self._set_nested_value(data, yaml_path, val)
+                    (funcs_to_enable if val else funcs_to_disable).add(func_name)
+
+                # rmq1: mic 开关联动 rndis（特殊 side-effect）
+                if model_name == "rmq1" and request.query.get("enable_mic") is not None:
+                    self._set_nested_value(
+                        data, "otg/devices/rndis/enabled",
+                        not self._get_nested_value(data, "otg/devices/audio/start", False),
+                    )
+
+                await self._write_yaml(data)
+
+                if funcs_to_enable or funcs_to_disable:
+                    self._logger.info("OTG functions changed, applying via kvmd-otgconf ...")
+                    await self.__change_otg_functions(funcs_to_enable, funcs_to_disable)
+
+                return make_json_response({
+                    key: self._get_nested_value(data, yaml_path, default)
+                    for key, (yaml_path, default, _) in self._OTG_FUNC_MAP.items()
+                })
+
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error setting OTG functions: {e}")
+            return make_json_exception(BadRequestError("Error setting OTG functions"), 502)
 
     async def _read_user_config(self) -> Dict:
         """读取用户JSON配置文件"""
@@ -872,45 +1015,54 @@ class SystemApi:
                 return -hours * 60   # GMT-8 -> UTC+8
         return 0
 
+    def _get_current_timezone_name(self) -> str:
+        """从/etc/localtime符号链接获取当前IANA时区名称"""
+        try:
+            if os.path.exists("/etc/localtime"):
+                link_target = os.readlink("/etc/localtime")
+                if "/zoneinfo/" in link_target:
+                    zone_path = link_target.split("/zoneinfo/")[-1]
+                    # 去掉posix/前缀
+                    if zone_path.startswith("posix/"):
+                        zone_path = zone_path[len("posix/"):]
+                    return zone_path
+        except OSError:
+            pass
+        return "Etc/GMT"
+
+    def _get_utc_offset_minutes(self) -> int:
+        """获取当前系统时区的UTC偏移分钟数"""
+        try:
+            now = datetime.now()
+            utc_now = datetime.utcnow()
+            delta = now - utc_now
+            return int(delta.total_seconds() / 60)
+        except Exception:
+            return 0
+
     @exposed_http("GET", "/system/time")
     async def get_time_handler(self, request: Request) -> Response:
         """获取系统时间和时区处理器"""
         try:
             # 获取系统当前时间戳（秒）
             current_timestamp = int(datetime.now().timestamp())
-            
-            # 获取系统时区路径
-            gmt_zone = "Etc/GMT"
-            try:
-                if os.path.exists("/etc/localtime"):
-                    try:
-                        link_target = os.readlink("/etc/localtime")
-                        if "/zoneinfo/" in link_target:
-                            zone_path = link_target.split("/zoneinfo/")[-1]
-                            # 检查是否为GMT格式的时区
-                            if zone_path.startswith("Etc/GMT") or zone_path.startswith("posix/Etc/GMT"):
-                                gmt_zone = zone_path.replace("posix/", "")
-                            else:
-                                # 如果不是GMT格式，默认使用GMT
-                                gmt_zone = "Etc/GMT"
-                        else:
-                            gmt_zone = "Etc/GMT"
-                    except OSError:
-                        gmt_zone = "Etc/GMT"
-                        
-            except Exception as e:
-                self._logger.warning(f"Failed to get timezone: {e}")
-                gmt_zone = "Etc/GMT"
-            
+
+            # 获取IANA时区名称
+            timezone_name = self._get_current_timezone_name()
+
             # 获取时区偏移量（分钟）
-            timezone_offset = self._get_offset_from_gmt_zone(gmt_zone)
-            
+            if timezone_name.startswith("Etc/GMT"):
+                timezone_offset = self._get_offset_from_gmt_zone(timezone_name)
+            else:
+                timezone_offset = self._get_utc_offset_minutes()
+
             return make_json_response({
                 "success": True,
                 "time": current_timestamp,
-                "time_zone": timezone_offset
+                "time_zone": timezone_offset,
+                "timezone_name": timezone_name
             })
-            
+
         except Exception as e:
             self._logger.error(f"Error getting system time: {e}")
             return make_json_exception(BadRequestError(f"Error getting system time: {str(e)}"), 502)
@@ -1010,6 +1162,118 @@ class SystemApi:
         except Exception as e:
             self._logger.error(f"Error setting system time: {e}")
             return make_json_exception(BadRequestError(f"Error setting system time: {str(e)}"), 502)
+
+    # ===================== Timezone by city APIs =====================
+
+    _ZONEINFO_BASE = "/usr/share/zoneinfo"
+    _TIMEZONE_REGIONS = (
+        "Africa", "America", "Antarctica", "Arctic", "Asia",
+        "Atlantic", "Australia", "Europe", "Indian", "Pacific",
+    )
+    _timezone_list_cache: Optional[List[str]] = None
+
+    def _build_timezone_list(self) -> List[str]:
+        """扫描zoneinfo目录，构建有效IANA时区列表并缓存"""
+        if SystemApi._timezone_list_cache is not None:
+            return SystemApi._timezone_list_cache
+
+        result: List[str] = []
+        base = self._ZONEINFO_BASE
+        for region in self._TIMEZONE_REGIONS:
+            region_dir = os.path.join(base, region)
+            if not os.path.isdir(region_dir):
+                continue
+            for root, _dirs, files in os.walk(region_dir):
+                for fname in sorted(files):
+                    full = os.path.join(root, fname)
+                    # 跳过非文件（符号链接也算）
+                    rel = os.path.relpath(full, base)
+                    result.append(rel)
+        result.sort()
+        SystemApi._timezone_list_cache = result
+        return result
+
+    @staticmethod
+    def _is_valid_tz_name(tz: str) -> bool:
+        """验证时区名称是否安全（防路径穿越）"""
+        # 不允许空、以/开头、包含..、包含连续/
+        if not tz or tz.startswith("/") or ".." in tz or "//" in tz:
+            return False
+        # 只允许字母、数字、下划线、连字符、加号、斜杠
+        if not re.match(r'^[A-Za-z0-9_/+\-]+$', tz):
+            return False
+        return True
+
+    @exposed_http("GET", "/system/timezone/list")
+    async def get_timezone_list_handler(self, request: Request) -> Response:
+        """获取可用的IANA时区列表"""
+        try:
+            region = request.query.get("region")
+            tz_list = self._build_timezone_list()
+
+            if region:
+                # 按地区过滤
+                if region not in self._TIMEZONE_REGIONS:
+                    raise BadRequestError(
+                        f"Invalid region: {region}. Valid regions: {', '.join(self._TIMEZONE_REGIONS)}"
+                    )
+                tz_list = [tz for tz in tz_list if tz.startswith(region + "/")]
+
+            return make_json_response({
+                "success": True,
+                "timezones": tz_list,
+                "count": len(tz_list)
+            })
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error listing timezones: {e}")
+            return make_json_exception(BadRequestError(f"Error listing timezones: {str(e)}"), 502)
+
+    @exposed_http("POST", "/system/timezone")
+    async def set_timezone_handler(self, request: Request) -> Response:
+        """按IANA城市名称设置系统时区"""
+        try:
+            tz_name = request.query.get("timezone", "").strip()
+            if not tz_name:
+                raise BadRequestError("timezone parameter is required (e.g. Asia/Shanghai)")
+
+            # 安全校验
+            if not self._is_valid_tz_name(tz_name):
+                raise BadRequestError(f"Invalid timezone name: {tz_name}")
+
+            # 检查时区文件是否存在
+            tz_file = os.path.join(self._ZONEINFO_BASE, tz_name)
+            if not os.path.isfile(tz_file):
+                raise BadRequestError(f"Timezone not found: {tz_name}")
+
+            # 确认路径没有逃逸出zoneinfo目录
+            real_base = os.path.realpath(self._ZONEINFO_BASE)
+            real_tz = os.path.realpath(tz_file)
+            if not real_tz.startswith(real_base + "/"):
+                raise BadRequestError(f"Invalid timezone path: {tz_name}")
+
+            # 设置/etc/localtime符号链接
+            try:
+                if os.path.exists("/etc/localtime") or os.path.islink("/etc/localtime"):
+                    os.remove("/etc/localtime")
+                os.symlink(tz_file, "/etc/localtime")
+                await aiotools.run_async(os.sync)
+                self._logger.info(f"Set timezone to {tz_name} -> {tz_file}")
+            except OSError as e:
+                self._logger.error(f"Failed to set /etc/localtime: {e}")
+                raise BadRequestError(f"Failed to set timezone: {e}")
+
+            return make_json_response({
+                "success": True,
+                "timezone": tz_name
+            })
+
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error setting timezone: {e}")
+            return make_json_exception(BadRequestError(f"Error setting timezone: {str(e)}"), 502)
 
     @exposed_http("GET", "/system/get_config")
     async def get_config_handler(self, request: Request) -> Response:
@@ -1852,11 +2116,28 @@ class SystemApi:
 
         self._logger.info("OTG gadget restarted successfully")
 
+    async def __change_otg_functions(self, enable: set[str], disable: set[str]) -> None:
+        """通过 kvmd-otgconf link/unlink 指定 function，无需重建整个 gadget"""
+        args: list[str] = []
+        if enable:
+            args += ["-e"] + sorted(enable)
+        if disable:
+            args += ["-d"] + sorted(disable)
+        if not args:
+            return
+        returncode, _, stderr = await run_command("kvmd-otgconf", *args, timeout=30)
+        if returncode != 0:
+            self._logger.warning("kvmd-otgconf failed (rc=%d): %s", returncode, stderr)
+            raise BadRequestError(f"kvmd-otgconf failed: {stderr}")
+        else:
+            self._logger.info("OTG functions updated successfully")
+
     @exposed_http("POST", "/system/reinit_udc")
     async def reinit_udc_handler(self, request: Request) -> Response:
         """重新初始化 OTG gadget（通过 stop+start 完整重建）"""
         try:
-            await self.__restart_otg()
+            async with self.__otg_lock:
+                await self.__restart_otg()
 
             return make_json_response({
                 "success": True,
@@ -1869,3 +2150,113 @@ class SystemApi:
             self._logger.error(f"Error restarting OTG gadget: {e}")
             return make_json_exception(BadRequestError(f"Error restarting OTG gadget: {str(e)}"), 502)
 
+    # ===== NTP
+
+    _NTP_CONF_PATH = "/etc/ntp.conf"
+
+    def _parse_ntp_servers(self, content: str) -> list:
+        """从 ntp.conf 内容中解析 server 列表"""
+        servers = []
+        for line in content.splitlines():
+            line = line.strip()
+            if line.startswith("server "):
+                parts = line.split()
+                if len(parts) >= 2:
+                    servers.append(parts[1])
+        return servers
+
+    def _build_ntp_conf(self, servers: list) -> str:
+        """根据 server 列表生成完整的 ntp.conf 内容"""
+        lines = ["restrict default ignore", ""]
+        for s in servers:
+            lines.append(f"server {s} iburst")
+        lines.append("")
+        for s in servers:
+            lines.append(f"restrict {s} nomodify notrap noquery")
+        lines.append("")
+        return "\n".join(lines)
+
+    @exposed_http("GET", "/system/ntp")
+    async def get_ntp_handler(self, request: Request) -> Response:
+        """获取当前 NTP 服务器列表"""
+        try:
+            if not os.path.exists(self._NTP_CONF_PATH):
+                return make_json_response({"ntp_servers": []})
+            with open(self._NTP_CONF_PATH, "r") as f:
+                content = f.read()
+            servers = self._parse_ntp_servers(content)
+            return make_json_response({"ntp_servers": servers})
+        except Exception as e:
+            self._logger.error(f"Error getting NTP servers: {e}")
+            return make_json_exception(BadRequestError(f"Error getting NTP servers: {str(e)}"), 502)
+
+    @exposed_http("POST", "/system/ntp")
+    async def set_ntp_handler(self, request: Request) -> Response:
+        """设置 NTP 服务器列表（全量替换），重写 /etc/ntp.conf 并重启 ntpd
+
+        请求体格式：
+        {
+            "ntp_servers": ["pool.ntp.org", "ntp.aliyun.com", ...]
+        }
+
+        前端先通过 GET /system/ntp 获取当前列表，在本地做增/删/改后，
+        将期望的完整列表 POST 回来即可。
+        """
+        try:
+            data = await request.json()
+            if not isinstance(data, dict):
+                raise BadRequestError("Request body must be a JSON object")
+            servers = data.get("ntp_servers")
+
+            if not isinstance(servers, list):
+                raise BadRequestError("ntp_servers must be a list")
+            if len(servers) == 0:
+                raise BadRequestError("ntp_servers must not be empty")
+            if len(servers) > 10:
+                raise BadRequestError("ntp_servers must not exceed 10 entries")
+
+            import re as _re
+            valid_host = _re.compile(
+                r"^(?:[a-zA-Z0-9](?:[a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$"
+                r"|^(?:\d{1,3}\.){3}\d{1,3}$"
+            )
+            cleaned = []
+            for s in servers:
+                if not isinstance(s, str) or not s.strip():
+                    raise BadRequestError("Each NTP server must be a non-empty string")
+                s = s.strip()
+                if not valid_host.fullmatch(s):
+                    raise BadRequestError(f"Invalid NTP server address: {s!r}")
+                cleaned.append(s)
+
+            # 写入 /etc/ntp.conf
+            conf_content = self._build_ntp_conf(cleaned)
+            with open(self._NTP_CONF_PATH, "w") as f:
+                f.write(conf_content)
+            self._logger.info(f"Wrote /etc/ntp.conf with servers: {cleaned}")
+
+            # 同时写入持久化路径，升级后由 S49ntp 恢复
+            _NTP_USER_CONF = "/etc/kvmd/user/ntp.conf"
+            os.makedirs(os.path.dirname(_NTP_USER_CONF), exist_ok=True)
+            with open(_NTP_USER_CONF, "w") as f:
+                f.write(conf_content)
+                
+            # sync 文件系统
+            await run_shell("sync")
+
+            # 重启 ntpd
+            returncode, _, stderr_text = await run_command(
+                "/etc/init.d/S49ntp", "restart", timeout=30
+            )
+            if returncode != 0:
+                self._logger.warning(f"ntpd restart returned non-zero: {stderr_text}")
+
+            return make_json_response({"success": True})
+
+        except json.JSONDecodeError:
+            return make_json_exception(BadRequestError("Invalid JSON format"), 400)
+        except BadRequestError as e:
+            return make_json_exception(e, 400)
+        except Exception as e:
+            self._logger.error(f"Error setting NTP servers: {e}")
+            return make_json_exception(BadRequestError(f"Error setting NTP servers: {str(e)}"), 502)

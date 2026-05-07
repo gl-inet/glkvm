@@ -44,7 +44,7 @@ from ...htserver import RequestUnixCredentials
 
 
 # =====
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=False)  # Mutable to allow sliding expiration
 class _Session:
     user:      str
     expire_ts: int
@@ -348,6 +348,23 @@ class AuthManager:  # pylint: disable=too-many-arguments,too-many-instance-attri
                                        session.user,
                                        self.__get_sessions_number(session.user))
         return None
+
+    def refresh_token_expiry(self, token: str) -> bool:
+        """Refresh token expiration time (sliding expiration).
+        Returns True if token was found and refreshed.
+        Uses throttling: only refresh when remaining time < half of expire time.
+        """
+        assert self.__enabled
+        session = self.__sessions.get(token)
+        if session is not None:
+            if self.__expire > 0 and session.expire_ts > 0:
+                now = self.__get_now_ts()
+                remaining = session.expire_ts - now
+                # Only refresh if remaining time is less than half of expire time (throttling)
+                if remaining < self.__expire // 2:
+                    session.expire_ts = now + self.__expire
+                return True
+        return False
 
     def is_two_step_login_enabled(self) -> bool:
         return self.__two_step_login_enabled

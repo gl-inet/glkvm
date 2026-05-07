@@ -28,6 +28,7 @@ from ..mouse import MOUSE_TO_EVDEV
 from ..mouse import MouseRange
 from ..mouse import MouseDelta
 
+from . import raise_error
 from . import check_string_in_list
 
 from .basic import valid_number
@@ -58,3 +59,31 @@ def valid_hid_mouse_button(arg: Any) -> str:
 def valid_hid_mouse_delta(arg: Any) -> int:
     arg = valid_number(arg, name="Mouse delta")
     return MouseDelta.normalize(arg)
+
+
+def valid_hid_jiggler_time(arg: Any) -> str:
+    try:
+        text = str(arg).strip()
+        parts = text.split(":")
+        if len(parts) != 2:
+            raise ValueError()
+        hour = int(parts[0])
+        minute = int(parts[1])
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError()
+        return f"{hour:02d}:{minute:02d}"
+    except Exception:
+        raise_error(arg, "jiggler time (HH:MM)")
+
+
+def valid_hid_jiggler_schedule(arg: Any) -> list:
+    if not isinstance(arg, list):
+        raise_error(arg, "jiggler schedule (list of periods)")
+    periods = []
+    for item in arg:
+        if not isinstance(item, dict):
+            raise_error(item, "jiggler period (object with start/end)")
+        start = valid_hid_jiggler_time(item.get("start"))
+        end = valid_hid_jiggler_time(item.get("end"))
+        periods.append({"start": start, "end": end})
+    return periods

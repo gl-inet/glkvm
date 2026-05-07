@@ -100,7 +100,15 @@ class Stun:
                 ext_ip = (resp.ext.ip if resp.ext is not None else "")
             '''
             # use pystun3 get NAT info，使用已解析的IP而不是域名
-            _nat_type, ext_ip, ext_port = get_ip_info(stun_host=self.__stun_ip, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
+            # 注意：get_ip_info 是同步阻塞调用，必须放到线程池中执行，
+            # 否则会阻塞 asyncio 事件循环，导致其他协程（如 disable_flag 轮询）被卡住
+            loop = asyncio.get_running_loop()
+            # 将 self.__stun_ip 通过默认参数捕获为当前快照，
+            # 防止线程池内执行期间实例变量被其他协程修改
+            _nat_type, ext_ip, ext_port = await loop.run_in_executor(
+                None,
+                lambda _stun_ip=self.__stun_ip: get_ip_info(stun_host=_stun_ip, stun_port=self.__port, source_ip=src_ip, source_port=src_port)
+            )
 
             value_to_member_map = {member.value: member for member in StunNatType}
             nat_type = value_to_member_map.get(_nat_type)
@@ -134,9 +142,13 @@ class Stun:
 
     async def __retried_getaddrinfo_udp(self, host: str, port: int) -> list:
         retries = self.__retries
+        loop = asyncio.get_running_loop()
         while True:
             try:
-                return socket.getaddrinfo(host, port, type=socket.SOCK_DGRAM)
+                # socket.getaddrinfo 是同步阻塞的 DNS 查询，放到线程池避免阻塞事件循环
+                return await loop.run_in_executor(
+                    None, lambda h=host, p=port: socket.getaddrinfo(h, p, type=socket.SOCK_DGRAM)
+                )
             except Exception:
                 retries -= 1
                 if retries == 0:

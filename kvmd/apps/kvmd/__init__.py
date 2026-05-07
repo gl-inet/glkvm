@@ -27,6 +27,7 @@ from ...plugins.atx import get_atx_class
 from ...plugins.msd import get_msd_class
 from .api.rndis import RndisApi
 from .api.upgrade import UpgradeApi
+from .api.config_utils import migrate_boot_config_sync
 
 from .. import init as init_func
 
@@ -55,6 +56,9 @@ def get_hw_model() -> str:
 
 # =====
 def main(argv: (list[str] | None)=None) -> None:
+    # 在读取配置之前清除 boot.yaml 中的孤立/废弃 key，确保本次启动即生效
+    migrate_boot_config_sync()
+
     config = init_func(
         prog="kvmd",
         description="The main PiKVM daemon",

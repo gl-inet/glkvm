@@ -96,6 +96,7 @@ from ..validators.kvm import valid_stream_video_format
 from ..validators.kvm import valid_stream_h264_bitrate
 from ..validators.kvm import valid_stream_h264_gop
 from ..validators.kvm import valid_stream_zero_delay
+from ..validators.kvm import valid_stream_venc_mode
 
 from ..validators.ugpio import valid_ugpio_driver
 from ..validators.ugpio import valid_ugpio_channel
@@ -421,7 +422,7 @@ def _get_config_scheme() -> dict:
 
             "auth": {
                 "enabled": Option(True, type=valid_bool),
-                "expire":  Option(0,    type=valid_expire),
+                "expire":  Option(43200,    type=valid_expire),  # 12 hours in seconds
 
                 "usc": {
                     "users":  Option([], type=valid_users_list),  # PiKVM username has a same regex as a UNIX username
@@ -503,7 +504,7 @@ def _get_config_scheme() -> dict:
             "streamer": {
                 "forever": Option(False, type=valid_bool),
 
-                "reset_delay":    Option(1.0,  type=valid_float_f0),
+                "reset_delay":    Option(0.2,  type=valid_float_f0),  # 原为1.0s，减小以加快 adaptive mode 切回响应速度
                 "shutdown_delay": Option(10.0, type=valid_float_f01),
                 "state_poll":     Option(1.0,  type=valid_float_f01),
 
@@ -528,7 +529,7 @@ def _get_config_scheme() -> dict:
 
                 "h264_bitrate": {
                     "default": Option(0,     type=valid_stream_h264_bitrate, if_empty=0, unpack_as="h264_bitrate"),
-                    "min":     Option(25,    type=valid_stream_h264_bitrate, unpack_as="h264_bitrate_min"),
+                    "min":     Option(0,     type=valid_stream_h264_bitrate, unpack_as="h264_bitrate_min"),
                     "max":     Option(20000, type=valid_stream_h264_bitrate, unpack_as="h264_bitrate_max"),
                 },
 
@@ -539,6 +540,8 @@ def _get_config_scheme() -> dict:
                 },
 
                 "zero_delay": Option(False if model == "rm10" else True, type=valid_stream_zero_delay),
+
+                "venc_mode": Option("normal", type=valid_stream_venc_mode),
 
                 "unix":    Option("/run/kvmd/ustreamer.sock", type=valid_abs_path, unpack_as="unix_path"),
                 "timeout": Option(2.0, type=valid_float_f01),
@@ -560,8 +563,9 @@ def _get_config_scheme() -> dict:
             },
 
             "ocr": {
-                "langs":    Option(["eng"], type=valid_string_list, unpack_as="default_langs"),
-                "tessdata": Option("/usr/share/tessdata", type=valid_stripped_string_not_empty, unpack_as="data_dir_path")
+                "langs":       Option(["eng"], type=valid_string_list, unpack_as="default_langs"),
+                "tessdata":    Option("/usr/share/tessdata", type=valid_stripped_string_not_empty, unpack_as="data_dir_path"),
+                "rknn_socket": Option("/run/kvmd/ocr-service.sock", type=valid_stripped_string, unpack_as="rknn_socket"),
             },
 
             "snapshot": {
@@ -679,7 +683,8 @@ def _get_config_scheme() -> dict:
                 },
 
                 "msd": {
-                    "start": Option(True, type=valid_bool),
+                    "start_cdrom": Option(False, type=valid_bool),
+                    "start_flash": Option(False, type=valid_bool),
                     "default": {
                         "stall":     Option(False, type=valid_bool),
                         "cdrom":     Option(False,  type=valid_bool),
@@ -720,8 +725,8 @@ def _get_config_scheme() -> dict:
                 },
 
                 "audio": {
-                    "enabled":  Option(False, type=valid_bool),
-                    "start":    Option(True,  type=valid_bool),
+                    "enabled":  Option(True, type=valid_bool),
+                    "start":    Option(False,  type=valid_bool),
                     "product":  Option("Comet Microphone", type=valid_stripped_string),
                 },
 
@@ -929,7 +934,7 @@ def _get_config_scheme() -> dict:
 
             "check": {
                 "interval":      Option(10.0, type=valid_float_f01, unpack_as="check_interval"),
-                "retries":       Option(5,    type=valid_int_f1, unpack_as="check_retries"),
+                "retries":       Option(10,    type=valid_int_f1, unpack_as="check_retries"),
                 "retries_delay": Option(5.0,  type=valid_float_f01, unpack_as="check_retries_delay"),
             },
 

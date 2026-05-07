@@ -20,6 +20,7 @@
 # ========================================================================== #
 
 
+import json
 import os
 import stat
 import functools
@@ -56,6 +57,10 @@ from ....validators.hid import valid_hid_key
 from ....validators.hid import valid_hid_mouse_move
 from ....validators.hid import valid_hid_mouse_button
 from ....validators.hid import valid_hid_mouse_delta
+from ....validators.hid import valid_hid_jiggler_schedule
+
+
+_JIGGLER_SCHEDULE_PATH = "/etc/kvmd/user/jiggler_schedule.json"
 
 
 # =====
@@ -71,6 +76,24 @@ class HidApi:
         self.__keymaps_dir_path = os.path.dirname(keymap_path)
         self.__default_keymap_name = os.path.basename(keymap_path)
         self.__ensure_symmap(self.__default_keymap_name)
+
+        self.__load_jiggler_schedule()
+
+    def __load_jiggler_schedule(self) -> None:
+        try:
+            with open(_JIGGLER_SCHEDULE_PATH) as f:
+                data = json.load(f)
+            periods = valid_hid_jiggler_schedule(data.get("periods", []))
+            self.__hid.set_jiggler_schedule(periods)
+        except FileNotFoundError:
+            pass
+        except Exception:
+            pass
+
+    def __save_jiggler_schedule(self, periods: list) -> None:
+        os.makedirs(os.path.dirname(_JIGGLER_SCHEDULE_PATH), exist_ok=True)
+        with open(_JIGGLER_SCHEDULE_PATH, "w") as f:
+            json.dump({"periods": periods}, f, indent=2)
 
     # =====
 
@@ -90,6 +113,15 @@ class HidApi:
             if req.query.get(key) is not None
         }
         self.__hid.set_params(**params)  # type: ignore
+        return make_json_response()
+
+    @exposed_http("POST", "/hid/set_jiggler_schedule")
+    async def __set_jiggler_schedule_handler(self, req: Request) -> Response:
+        body = await req.json()
+        periods = valid_hid_jiggler_schedule(body.get("periods", []))
+        self.__hid.set_jiggler_schedule(periods)
+        self.__save_jiggler_schedule(periods)
+        await self.__hid.trigger_state()
         return make_json_response()
 
     @exposed_http("POST", "/hid/set_connected")

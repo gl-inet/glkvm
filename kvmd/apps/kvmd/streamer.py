@@ -20,6 +20,7 @@
 # ========================================================================== #
 
 
+import os
 import signal
 import asyncio
 import asyncio.subprocess
@@ -56,6 +57,7 @@ class _StreamerParams:
     __H264_BITRATE = "h264_bitrate"
     __H264_GOP = "h264_gop"
     __ZERO_DELAY = "zero_delay"
+    __VENC_MODE = "venc_mode"
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
@@ -79,6 +81,7 @@ class _StreamerParams:
         h264_gop_max: int,
 
         zero_delay: bool,
+        venc_mode: str,
     ) -> None:
 
         self.__has_quality = bool(quality)
@@ -106,6 +109,9 @@ class _StreamerParams:
         # Always include zero_delay parameter
         self.__params[self.__ZERO_DELAY] = zero_delay
 
+        # Always include venc_mode parameter
+        self.__params[self.__VENC_MODE] = venc_mode
+
     def get_features(self) -> dict:
         return {
             self.__QUALITY: self.__has_quality,
@@ -113,6 +119,7 @@ class _StreamerParams:
             "h264": self.__has_h264,
             "h265": self.__has_h264,
             "zero_delay": True,  # Always available
+            "venc_mode": True,   # Always available
         }
 
     def get_limits(self) -> dict:
@@ -149,6 +156,11 @@ class _StreamerParams:
         # Handle zero_delay parameter (boolean, no limits check needed)
         if self.__ZERO_DELAY in params:
             new_params[self.__ZERO_DELAY] = bool(params[self.__ZERO_DELAY])
+
+        # Handle venc_mode parameter (string, only allow smart/normal)
+        if self.__VENC_MODE in params:
+            if params[self.__VENC_MODE] in ["smart", "normal"]:
+                new_params[self.__VENC_MODE] = params[self.__VENC_MODE]
 
         self.__params = new_params
 
@@ -368,7 +380,10 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
                 yield new
 
     async def __get_streamer_state(self) -> (dict | None):
-        if self.__streamer_task:
+        # 只要 Unix socket 文件存在就尝试连接（支持 webrtc_client 兼容模式）。
+        # 原来的 "if self.__streamer_task" 守卫在 adaptive mode（ustreamer 被杀）
+        # 下 __streamer_task=None，导致永远不去查询 socket，hdmi 状态无法上报。
+        if self.__streamer_task or os.path.exists(self.__unix_path):
             session = self.__ensure_client_session()
             try:
                 return (await session.get_state())
@@ -446,6 +461,12 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
         while True:
             try:
                 need_streamer = await self.__read_need_flag()
+                # webrtc_client 自适应模式下忽略 need_ustreamer 标志：
+                # /tmp/kvmd_janus_disable 由 server.py 在进入自适应模式时创建。
+                # 此时如果启动 ustreamer 会与 webrtc_client 争抚硬件导致崩溃。
+                if need_streamer and await aiotools.run_async(os.path.exists, "/tmp/kvmd_janus_disable"):
+                    logger.info("need_ustreamer=1 ignored: webrtc_client adaptive mode is active")
+                    need_streamer = False
                 if need_streamer != self.__need_flag_state:
                     self.__need_flag_state = need_streamer
                     if need_streamer:
@@ -567,5 +588,6 @@ class Streamer:  # pylint: disable=too-many-instance-attributes
 
     async def __kill_streamer_proc(self) -> None:
         if self.__streamer_proc:
-            await aioproc.kill_process(self.__streamer_proc, 3, get_logger(0))
+            # 等待时间缩短至 1s：ustreamer 响应 SIGTERM 很快，超时则 SIGKILL
+            await aioproc.kill_process(self.__streamer_proc, 1, get_logger(0))
         self.__streamer_proc = None

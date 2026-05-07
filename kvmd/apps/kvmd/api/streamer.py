@@ -61,22 +61,22 @@ class StreamerApi:
         if snapshot:
             if valid_bool(req.query.get("ocr", False)):
                 langs = self.__ocr.get_available_langs()
-                return Response(
-                    body=(await self.__ocr.recognize(
-                        data=snapshot.data,
-                        langs=valid_string_list(
-                            arg=str(req.query.get("ocr_langs", "")).strip(),
-                            subval=(lambda lang: check_string_in_list(lang, "OCR lang", langs)),
-                            name="OCR langs list",
+                return make_json_response(await self.__ocr.recognize(
+                    data=snapshot.data,
+                    langs=valid_string_list(
+                        arg=str(req.query.get("ocr_langs", "")).strip(),
+                        # RKNN 模式下 langs 为空列表，跳过合法性校验
+                        subval=(
+                            (lambda lang: check_string_in_list(lang, "OCR lang", langs))
+                            if langs else (lambda lang: lang)
                         ),
-                        left=int(valid_number(req.query.get("ocr_left", -1))),
-                        top=int(valid_number(req.query.get("ocr_top", -1))),
-                        right=int(valid_number(req.query.get("ocr_right", -1))),
-                        bottom=int(valid_number(req.query.get("ocr_bottom", -1))),
-                    )),
-                    headers=dict(snapshot.headers),
-                    content_type="text/plain",
-                )
+                        name="OCR langs list",
+                    ),
+                    left=int(valid_number(req.query.get("ocr_left", -1))),
+                    top=int(valid_number(req.query.get("ocr_top", -1))),
+                    right=int(valid_number(req.query.get("ocr_right", -1))),
+                    bottom=int(valid_number(req.query.get("ocr_bottom", -1))),
+                ))
             elif valid_bool(req.query.get("preview", False)):
                 data = await snapshot.make_preview(
                     max_width=valid_int_f0(req.query.get("preview_max_width", 0)),

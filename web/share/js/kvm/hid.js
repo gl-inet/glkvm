@@ -38,6 +38,7 @@ export function Hid(__getGeometry, __recorder) {
 	var __state = null;
 	var __keyboard = null;
 	var __mouse = null;
+	var __jiggler_schedule = [];
 
 	var __init__ = function() {
 		__keyboard = new Keyboard(__recorder.recordWsEvent);
@@ -79,6 +80,8 @@ export function Hid(__getGeometry, __recorder) {
 		tools.storage.bindSimpleSwitch($("hid-sysrq-ask-switch"), "hid.sysrq.ask", true);
 
 		tools.el.setOnClick($("hid-jiggler-switch"), __clickJigglerSwitch);
+		tools.el.setOnClick($("hid-jiggler-schedule-add"), __clickJigglerScheduleAdd);
+		tools.el.setOnClick($("hid-jiggler-schedule-save"), __clickJigglerScheduleSave);
 	};
 
 	/************************************************************************/
@@ -119,7 +122,12 @@ export function Hid(__getGeometry, __recorder) {
 				}
 				if (state.jiggler !== undefined) {
 					tools.feature.setEnabled($("hid-jiggler"), __state.jiggler.enabled);
+					tools.feature.setEnabled($("hid-jiggler-schedule"), __state.jiggler.enabled);
 					$("hid-jiggler-switch").checked = __state.jiggler.active;
+					if (__state.jiggler.schedule !== undefined) {
+						__jiggler_schedule = [...__state.jiggler.schedule];
+						__renderJigglerSchedule();
+					}
 				}
 				if (state.keyboard.outputs !== undefined) {
 					__updateKeyboardOutputs(__state.keyboard.outputs);
@@ -156,6 +164,10 @@ export function Hid(__getGeometry, __recorder) {
 		tools.el.setEnabled($("hid-reset-button"), __state);
 		tools.el.setEnabled($("udc-reinit-button"), __state);
 		tools.el.setEnabled($("hid-jiggler-switch"), __state);
+		tools.el.setEnabled($("hid-jiggler-schedule-start"), __state);
+		tools.el.setEnabled($("hid-jiggler-schedule-end"), __state);
+		tools.el.setEnabled($("hid-jiggler-schedule-add"), __state);
+		tools.el.setEnabled($("hid-jiggler-schedule-save"), __state);
 	};
 
 	var __updateKeyboardOutputs = function(outputs) {
@@ -271,6 +283,56 @@ export function Hid(__getGeometry, __recorder) {
 				wm.error(`Can't ${enabled ? "enabled" : "disable"} mouse jiggler`, http.responseText);
 			}
 		});
+	};
+
+	var __renderJigglerSchedule = function() {
+		let el = $("hid-jiggler-schedule-list");
+		if (__jiggler_schedule.length === 0) {
+			el.innerHTML = "<em style='color:#aaa;font-size:0.9em'>No schedule set</em>";
+		} else {
+			let html = "<table style='width:100%;font-size:0.9em;margin-bottom:4px'>";
+			for (let i = 0; i < __jiggler_schedule.length; i++) {
+				let p = __jiggler_schedule[i];
+				html += `<tr><td>${tools.escape(p.start)} ~ ${tools.escape(p.end)}</td>`;
+				html += `<td align='right'><button data-idx='${i}' class='hid-jiggler-schedule-del small'>✕</button></td></tr>`;
+			}
+			html += "</table>";
+			el.innerHTML = html;
+			for (let btn of el.querySelectorAll(".hid-jiggler-schedule-del")) {
+				tools.el.setOnClick(btn, function() {
+					let idx = parseInt(btn.getAttribute("data-idx"));
+					__jiggler_schedule.splice(idx, 1);
+					__renderJigglerSchedule();
+				});
+			}
+		}
+	};
+
+	var __clickJigglerScheduleAdd = function() {
+		let start = $("hid-jiggler-schedule-start").value;
+		let end = $("hid-jiggler-schedule-end").value;
+		if (!start || !end) {
+			wm.error("Please set both start and end times");
+			return;
+		}
+		__jiggler_schedule.push({"start": start, "end": end});
+		__renderJigglerSchedule();
+		$("hid-jiggler-schedule-start").value = "";
+		$("hid-jiggler-schedule-end").value = "";
+	};
+
+	var __clickJigglerScheduleSave = function() {
+		tools.httpPost(
+			"api/hid/set_jiggler_schedule",
+			null,
+			function(http) {
+				if (http.status !== 200) {
+					wm.error("Can't save jiggler schedule", http.responseText);
+				}
+			},
+			JSON.stringify({"periods": __jiggler_schedule}),
+			"application/json"
+		);
 	};
 
 	var __clickConnectSwitch = function() {

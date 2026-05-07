@@ -104,7 +104,7 @@ class RepeaterApi:
 
             return make_json_response({"result": "success"})
         except Exception as e:
-            self._logger.error(f"Error executing repeater connect")
+            self._logger.error(f"Error executing repeater connect: {e}")
             return make_json_exception(BadRequestError(f"Failed to connect wifi:{e}"), 502)
 
     @exposed_http("POST", "/repeater/disconnect")
@@ -160,6 +160,66 @@ class RepeaterApi:
         except Exception as e:
             self._logger.error(f"Error executing repeater command: {e}")
             return make_json_exception(BadRequestError(f"Failed to forget wifi:{e}"), 502)
+
+    @exposed_http("POST", "/repeater/add_preset_ap")
+    async def __add_preset_ap_handler(self, req: Request) -> Response:
+        # 读取请求体中的JSON数据
+        data = await req.json()
+
+        ssid = data.get("ssid")
+        encryption = data.get("encryption")
+        key = data.get("key")
+
+        try:
+            if not ssid:
+                return make_json_exception(BadRequestError("Missing SSID"), 400)
+
+            args = {"ssid": ssid}
+            if encryption is not None:
+                args["encryption"] = encryption
+            if key:
+                args["key"] = key
+
+            res = await ubus_call_async("repeater", "add_preset_ap", args)
+
+            if res["err_code"] != 0:
+                return make_json_response({"result": "failed"})
+
+            return make_json_response({"result": "success"})
+        except Exception as e:
+            self._logger.error(f"Error executing repeater add_preset_ap: {e}")
+            return make_json_exception(BadRequestError(f"Failed to add preset ap:{e}"), 502)
+
+    @exposed_http("POST", "/repeater/del_preset_ap")
+    async def __del_preset_ap_handler(self, req: Request) -> Response:
+        # 读取请求体中的JSON数据
+        data = await req.json()
+
+        ssid = data.get("ssid")
+
+        try:
+            if not ssid:
+                return make_json_exception(BadRequestError("Missing SSID"), 400)
+
+            res = await ubus_call_async("repeater", "del_preset_ap", {"ssid": ssid})
+
+            if res["err_code"] != 0:
+                return make_json_response({"result": "failed"})
+
+            return make_json_response({"result": "success"})
+        except Exception as e:
+            self._logger.error(f"Error executing repeater del_preset_ap: {e}")
+            return make_json_exception(BadRequestError(f"Failed to delete preset ap:{e}"), 502)
+
+    @exposed_http("GET", "/repeater/get_preset_ap_list")
+    async def __get_preset_ap_list_handler(self, _: Request) -> Response:
+        try:
+            res = await ubus_call_async("repeater", "get_preset_ap_list")
+
+            return make_json_response({"ap_list": res["ap_list"]})
+        except Exception as e:
+            self._logger.error(f"Error executing repeater get_preset_ap_list: {e}")
+            return make_json_exception(BadRequestError(f"Failed to get preset ap list:{e}"), 502)
 
     @exposed_http("GET", "/repeater/get_status")
     async def __get_ap_status_handler(self, _: Request) -> Response:

@@ -566,47 +566,66 @@ class TailscaleApi:
             self._logger.error(f"Error logging out from Tailscale: {e}")
             return make_json_exception(BadRequestError(), 502)
 
-    async def _get_eth0_subnet(self) -> Optional[str]:
+    async def _get_interface_subnets(self) -> List[str]:
         """
-        获取eth0接口的子网信息，格式为CIDR（例如：192.168.1.0/24）
-        如果获取失败则返回None
+        获取指定网络接口（eth0/wlan0/wwan0）的子网信息，格式为 CIDR（例如：192.168.1.0/24）
+        支持多网口，返回所有有效接口的子网列表
         """
+        # 只监控这三个网络接口
+        target_interfaces = {"eth0", "wlan0", "wwan0"}
+        subnets = []
+        
         try:
-            # 获取eth0接口地址信息
-            cmd = "ip -json addr show eth0"
+            # 获取所有网络接口地址信息
+            cmd = "ip -json addr show"
             output = await self._run_command(cmd)
             
-            # 解析JSON输出
+            # 解析 JSON 输出
             data = json.loads(output)
             if not data or not isinstance(data, list):
-                self._logger.error("eth0 interface information not found")
-                return None
+                self._logger.error("Network interface information not found")
+                return []
 
-            self._logger.info(f"eth0 interface information: {data}")
+            self._logger.info(f"Network interface information: {data}")
                 
-            # 遍历所有接口信息，查找eth0
+            # 遍历所有接口信息
             for interface in data:
-                # 检查是否是eth0接口
-                if interface.get("ifname") == "eth0" and interface.get("addr_info"):
-                    # 查找IPv4地址信息
-                    for addr_info in interface["addr_info"]:
-                        if addr_info.get("family") == "inet":  # IPv4
-                            ip_address = addr_info.get("local")
-                            prefix_len = addr_info.get("prefixlen")
-                            
-                            if ip_address and prefix_len:
-                                # 使用ipaddress库计算网络地址
-                                network = ipaddress.IPv4Network(f"{ip_address}/{prefix_len}", strict=False)
-                                return str(network)
+                ifname = interface.get("ifname")
+                
+                # 只处理目标接口
+                if ifname not in target_interfaces:
+                    continue
+                    
+                if not interface.get("addr_info"):
+                    continue
+                
+                # 查找 IPv4 地址信息
+                for addr_info in interface["addr_info"]:
+                    if addr_info.get("family") == "inet":  # IPv4
+                        ip_address = addr_info.get("local")
+                        prefix_len = addr_info.get("prefixlen")
+                        
+                        if ip_address and prefix_len:
+                            # 使用 ipaddress 库计算网络地址
+                            network = ipaddress.IPv4Network(f"{ip_address}/{prefix_len}", strict=False)
+                            subnet_str = str(network)
+                            subnets.append(subnet_str)
+                            self._logger.info(f"Got subnet from {ifname}: {subnet_str}")
             
-            self._logger.warning("No IPv4 address found for eth0 interface")
-            return None
+            if not subnets:
+                self._logger.warning("No IPv4 addresses found for target interfaces (eth0/wlan0/wwan0)")
+            else:
+                self._logger.info(f"Total subnets found: {len(subnets)} - {subnets}")
+                
+            return subnets
+            
         except json.JSONDecodeError as e:
             self._logger.error(f"Error parsing ip command output: {e}")
-            return None
+            return []
         except Exception as e:
-            self._logger.error(f"Error getting eth0 subnet information: {e}")
-            return None
+            self._logger.error(f"Error getting network interface subnet information: {e}")
+            return []
+
 
     @exposed_http("POST", "/tailscale/config")
     async def _config_handler(self, request: Request) -> Response:
@@ -615,7 +634,7 @@ class TailscaleApi:
         接受参数：
         - exit_node: 布尔值，为true时设置当前节点为exit node，为false时取消
         - advertise_routes: 字符串，要广播的路由，多个路由用逗号分隔
-          特殊值："auto" - 自动获取eth0接口的子网
+          特殊值："auto" - 自动获取eth0/wlan0/wwan0接口的子网
         - accept_routes: 布尔值，是否接受来自其他节点的路由
         - accept_dns: 布尔值，是否接受tailscale的DNS设置
         """
@@ -640,15 +659,16 @@ class TailscaleApi:
             actual_routes = None
             if advertise_routes is not None:
                 if advertise_routes.lower() == "auto":
-                    # 自动获取eth0子网
-                    eth0_subnet = await self._get_eth0_subnet()
-                    if eth0_subnet:
-                        actual_routes = eth0_subnet
-                        cmd_parts.append(f"--advertise-routes={eth0_subnet}")
+                    # 自动获取 eth0/wlan0/wwan0 子网
+                    subnets = await self._get_interface_subnets()
+                    if subnets:
+                        # 多个子网用逗号分隔
+                        actual_routes = ",".join(subnets)
+                        cmd_parts.append(f"--advertise-routes={actual_routes}")
                     else:
                         return make_json_response({
                             "success": False,
-                            "error": "Failed to automatically get eth0 subnet information"
+                            "error": "Failed to automatically get subnet information from eth0/wlan0/wwan0"
                         })
                 elif advertise_routes.strip():
                     actual_routes = advertise_routes

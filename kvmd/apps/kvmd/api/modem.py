@@ -67,7 +67,7 @@ class ModemApi:
 
             return make_json_response(res)
         except Exception as e:
-            self._logger.error(f"Error executing modem command: {e}")
+            self._logger.debug(f"Error executing modem command: {e}")
             return make_json_exception(BadRequestError(f"Failed to get modem status:{e}"), 502)
 
     @exposed_http("POST", "/modem/enable")

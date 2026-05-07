@@ -73,8 +73,9 @@ class _YamlLoader(yaml.SafeLoader):
                     child_path = os.path.join(inc_path, child)
                     if os.path.isfile(child_path) or os.path.islink(child_path):
                         yaml_merge(tree, (load_yaml_file(child_path) or {}), child_path)
-            else:  # Try file
+            elif os.path.isfile(inc_path) or os.path.islink(inc_path):
                 yaml_merge(tree, (load_yaml_file(inc_path) or {}), inc_path)
+            # Missing file is silently skipped (optional includes)
         return tree
 
 

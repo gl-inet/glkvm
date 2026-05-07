@@ -5,6 +5,7 @@ from typing import Dict, Any
 import time
 import os
 import re
+import ipaddress
 import zipfile
 import io
 import datetime
@@ -31,6 +32,26 @@ GSV1127_UPGRADE_CMD = "echo 0 > /sys/bus/i2c/devices/0-0058/enable_stream && sle
                             "&& echo 1 > /sys/bus/i2c/devices/0-0058/enable_stream"
 MODEL_PATH = "/proc/gl-hw-info/model"
 BASE_URL = "https://fw.gl-inet.com/kvm/{model}/release"
+BETA_BASE_URL = "https://fw.gl-inet.com/kvm/{model}/testing"
+
+_IPV4_RE = re.compile(rb"(?<![.\w])(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})(?![.\d])")
+
+_IPV6_RE = re.compile(
+    rb"(?<![:\w])(?:"
+    rb"(?:[0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,7}:"
+    rb"|:(?::[0-9a-fA-F]{1,4}){1,7}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,5}(?::[0-9a-fA-F]{1,4}){1,2}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,4}(?::[0-9a-fA-F]{1,4}){1,3}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,3}(?::[0-9a-fA-F]{1,4}){1,4}"
+    rb"|(?:[0-9a-fA-F]{1,4}:){1,2}(?::[0-9a-fA-F]{1,4}){1,5}"
+    rb"|[0-9a-fA-F]{1,4}:(?::[0-9a-fA-F]{1,4}){1,6}"
+    rb"|::(?:[fF]{4}(?::0{1,4})?:)?(?:25[0-5]|(?:2[0-4]|1?\d)?\d)(?:\.(?:25[0-5]|(?:2[0-4]|1?\d)?\d)){3}"
+    rb"|::1"
+    rb"|::"
+    rb")(?![:\w])"
+)
 
 class LogCollector:
     def __init__(self, model: str, log_dir: str, config_path: str = "log_config.yaml"):
@@ -65,7 +86,6 @@ class LogCollector:
                 'connmanctl services': 'connman_services_{timestamp}.log',
                 'connmanctl services 2>/dev/null | grep -oE "ethernet_[^ ]+" | head -1 | xargs -I{} connmanctl services {}': 'connman_eth0_{timestamp}.log',
                 'connmanctl services 2>/dev/null | grep -oE "wifi_[^ ]+" | head -1 | xargs -I{} connmanctl services {}': 'connman_wifi_{timestamp}.log',
-                '[ -f /tmp/channel_occupancy.json ] && cat /tmp/channel_occupancy.json': 'channel_occupancy_{timestamp}.json',
                 '[ -f /sys/fs/pstore/console-ramoops-0 ] && cat /sys/fs/pstore/console-ramoops-0': 'console_ramoops_0_{timestamp}.log',
                 '[ -f /sys/fs/pstore/dmesg-ramoops-0 ] && cat /sys/fs/pstore/dmesg-ramoops-0': 'dmesg_ramoops_0_{timestamp}.log',
                 '[ -f /sys/fs/pstore/dmesg-ramoops-1 ] && cat /sys/fs/pstore/dmesg-ramoops-1': 'dmesg_ramoops_1_{timestamp}.log',
@@ -73,14 +93,18 @@ class LogCollector:
             'model_commands': {
                 'rm10rc': {
                     'ubus call repeater status && iw dev wlan0 info && iw dev wlan0 link': 'wifi_status_{timestamp}.log',
+                    'ubus call repeater dump_surveys': 'wifi_channel_surveys_{timestamp}.json',
                     'ubus call modem status': 'modem_status_{timestamp}.log',
                 },
                 'rm10': {
                     'ubus call repeater status && iw dev wlan0 info && iw dev wlan0 link': 'wifi_status_{timestamp}.log',
+                    'ubus call repeater dump_surveys': 'wifi_channel_surveys_{timestamp}.json',
                     'readreg_lt6911c.sh': 'lt6911c_regs_{timestamp}.log',
                 },
                 'rmq1': {
-                    'cat /var/log/daemon.log': 'daemon_{timestamp}.log',
+                    'ubus call repeater status && iw dev wlan0 info && iw dev wlan0 link': 'wifi_status_{timestamp}.log',
+                    'ubus call repeater dump_surveys': 'wifi_channel_surveys_{timestamp}.json',
+                    'cat /var/log/daemon.log': 'logread_{timestamp}.log',
                     'cat /userdata/log/ax_user.log': 'ax_user_{timestamp}.log',
                     'cat /userdata/log/AXSyslog/syslog/*.log': 'ax_syslog_{timestamp}.log',
                     'cat /userdata/swupdate.log': 'ax_swupdate_{timestamp}.log',
@@ -97,6 +121,45 @@ class LogCollector:
             
         return default_config
     
+    @staticmethod
+    def _mask_public_ips(content: bytes) -> bytes:
+        """公网 IPv4 隐藏最后一段（1.2.3.4 → 1.2.3.*），公网 IPv6 全部隐藏，私有/回环/链路本地保持不变。"""
+        def _replace_v4(m: "re.Match") -> bytes:
+            ip_bytes = m.group(0)
+            try:
+                ip = ipaddress.IPv4Address(ip_bytes.decode('ascii'))
+                if not ip.is_global:
+                    return ip_bytes
+            except (ValueError, UnicodeDecodeError):
+                return ip_bytes
+            return ip_bytes.rsplit(b".", 1)[0] + b".*"
+
+        content = _IPV4_RE.sub(_replace_v4, content)
+
+        def _replace_v6(m: "re.Match") -> bytes:
+            ip_bytes = m.group(0)
+            try:
+                ip = ipaddress.IPv6Address(ip_bytes.decode('ascii'))
+                if ip.ipv4_mapped:
+                    return b"*:*:*:*:*:*:*:*" if ip.ipv4_mapped.is_global else ip_bytes
+                if not ip.is_global:
+                    return ip_bytes
+            except (ValueError, UnicodeDecodeError):
+                return ip_bytes
+            return b"*:*:*:*:*:*:*:*"
+
+        content = _IPV6_RE.sub(_replace_v6, content)
+
+        return content
+
+    @staticmethod
+    def _mask_sensitive_fields(content: bytes) -> bytes:
+        """将日志中的敏感字段值隐藏，如 auth_token=123 → auth_token=xxxx，password=123 → password=xxxx。"""
+        _SENSITIVE_RE = re.compile(
+            rb'(?i)((?:auth_token|password)=)[^\s&"\']+'  
+        )
+        return _SENSITIVE_RE.sub(rb'\1xxxx', content)
+
     async def _execute_and_save(self, cmd: str, filepath: str) -> bool:
         """执行命令并保存结果（带故障处理）"""
         try:
@@ -107,20 +170,26 @@ class LogCollector:
                 stderr=asyncio.subprocess.PIPE
             )
             stdout, stderr = await proc.communicate()
-            
-            # 保存结果
+
+            if stdout:
+                stdout = self._mask_public_ips(stdout)
+                stdout = self._mask_sensitive_fields(stdout)
+            if stderr:
+                stderr = self._mask_public_ips(stderr)
+                stderr = self._mask_sensitive_fields(stderr)
+
             with open(filepath, "wb") as f:
                 if stdout:
                     f.write(stdout)
                 if stderr:
                     f.write(b"\n\n--- STDERR ---\n\n")
                     f.write(stderr)
-            
+
             # 如果命令失败且没有输出，创建错误标记
             if proc.returncode != 0 and not stdout and not stderr:
                 with open(filepath, "wb") as f:
                     f.write(f"Command failed with exit code: {proc.returncode}".encode())
-            
+
             return True
         except Exception as e:
             # 执行异常，创建错误文件
@@ -411,6 +480,21 @@ class UpgradeApi:
 
     @exposed_http("GET", "/upgrade/download")
     async def __download_handler(self, request: web.Request) -> web.StreamResponse:
+        return await self.__start_download_task(
+            request,
+            base_url=self.__update_engine.get_base_url(),
+        )
+
+    @exposed_http("GET", "/upgrade/beta/download")
+    async def __beta_download_handler(self, request: web.Request) -> web.StreamResponse:
+        return await self.__start_download_task(
+            request,
+            base_url=self.__update_engine.get_beta_base_url(),
+            list_sha256_url=self.__update_engine.get_beta_list_sha256_url(),
+        )
+
+    async def __start_download_task(self, request: web.Request, base_url: str,
+                                     list_sha256_url: str = None) -> web.StreamResponse:
         # 如果有正在进行的下载任务，取消它
         if self.__current_download_task and not self.__current_download_task.done():
             self.__current_download_task.cancel()
@@ -420,7 +504,9 @@ class UpgradeApi:
                 pass
 
         # 创建新的下载任务
-        self.__current_download_task = asyncio.create_task(self._download_latest_firmware(request))
+        self.__current_download_task = asyncio.create_task(
+            self._download_latest_firmware(request, base_url, list_sha256_url)
+        )
         return await self.__current_download_task
 
     @exposed_http("GET", "/upgrade/download_cancel")
@@ -539,18 +625,19 @@ class UpgradeApi:
             get_logger(0).error(f"Error collecting logs: {str(ex)}")
             return make_json_exception(f"Error collecting logs: {str(ex)}", 500)
 
-    async def _download_latest_firmware(self, request: web.Request) -> web.StreamResponse:
+    async def _download_latest_firmware(self, request: web.Request,
+                                         base_url: str, list_sha256_url: str = None) -> web.StreamResponse:
         written = size = 0
 
         async with self.__download_lock:
             try:
                 # 使用get_list_sha256方法获取固件文件名
-                version, firmware_filename = await self.__update_engine.get_list_sha256()
+                version, firmware_filename = await self.__update_engine.get_list_sha256(list_sha256_url)
                 if not firmware_filename:
                     raise BadRequestError("Unable to get firmware filename")
                 
                 # 构建完整的固件下载URL
-                firmware_url = f"{self.__update_engine.get_base_url()}/{firmware_filename}"
+                firmware_url = f"{base_url}/{firmware_filename}"
                 get_logger(0).info("Generated firmware URL: %s", firmware_url)
 
                 async with htclient.download(
@@ -609,6 +696,10 @@ class UpdateEngine:
         # 保存model信息
         self.__model = model
 
+        # Beta渠道URL
+        self.__beta_base_url = BETA_BASE_URL.format(model=model)
+        self.__beta_list_sha256_url = f"{self.__beta_base_url}/list-sha256.txt"
+
     async def get_local_verion(self):
         with open("/etc/version", "r") as f:
             local_content = f.read().strip()
@@ -621,21 +712,21 @@ class UpdateEngine:
         local_dict = dict(line.split('=') for line in local_content.splitlines())
         return local_dict.get('RK_MODEL', '')
 
-    async def get_list_sha256(self)->tuple[str,str]:
+    async def get_list_sha256(self, list_sha256_url: str = None) -> tuple[str, str]:
+        url = list_sha256_url or self.__list_sha256_url
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(self.__list_sha256_url) as response:
+                async with session.get(url) as response:
                     if response.status == 200:
                         content = await response.text()
                         first_line = content.splitlines()[0]
                         version = first_line.split()[0]  # 获取第一个字段作为版本号
                         firmware = first_line.split()[1]  # 获取第二个字段作为固件类型
-                        return version,firmware
+                        return version, firmware
                     else:
-                        get_logger(0).error(f"Failed to get list-sha256: {response.status}")
+                        get_logger(0).error(f"Failed to get list-sha256 from {url}: {response.status}")
                         return "", ""
         except asyncio.CancelledError:
-            # 处理请求被取消的情况
             get_logger(0).warning("List-sha256 request was cancelled")
             return "", ""
         except Exception as e:
@@ -643,13 +734,20 @@ class UpdateEngine:
             return "", ""
     
     def get_base_url(self) -> str:
-        """获取base_url"""
         return self.__base_url
 
-    async def __get_metadata(self, version: str) -> Dict[str, Any]:
+    def get_beta_base_url(self) -> str:
+        return self.__beta_base_url
+
+    def get_beta_list_sha256_url(self) -> str:
+        return self.__beta_list_sha256_url
+
+    async def __get_metadata(self, version: str, base_url: str = None) -> Dict[str, Any]:
         """获取指定版本的metadata信息"""
         try:
-            metadata_url = f"{self.__base_url}/metadata_{version}"
+            if base_url is None:
+                base_url = self.__base_url
+            metadata_url = f"{base_url}/metadata_{version}"
             async with aiohttp.ClientSession() as session:
                 async with session.get(metadata_url) as response:
                     if response.status == 200:
@@ -667,6 +765,49 @@ class UpdateEngine:
             get_logger(0).error(f"Error getting metadata: {str(e)}")
             return {}
 
+    async def __fetch_channel_version(self, list_sha256_url: str, base_url: str, channel: str) -> Dict[str, Any]:
+        """获取指定渠道的版本信息
+        
+        Args:
+            list_sha256_url: list-sha256.txt 的完整URL
+            base_url: 渠道的base URL，用于获取metadata
+            channel: 渠道名称，用于日志
+            
+        Returns:
+            Dict: 包含 version, release_note, release_note_cn, error 字段
+        """
+        info: Dict[str, Any] = {"version": "", "release_note": "", "release_note_cn": "", "error": None}
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(list_sha256_url) as response:
+                    if response.status != 200:
+                        info["error"] = f"{channel} channel returned status code: {response.status}"
+                        return info
+                    list_content = await response.text()
+                    lines = list_content.strip().splitlines()
+                    if not lines:
+                        info["error"] = f"Empty {channel} list-sha256 response"
+                        return info
+                    parts = lines[0].split()
+                    if not parts:
+                        info["error"] = f"Invalid {channel} list-sha256 format"
+                        return info
+                    version = parts[0]
+                    metadata = await self.__get_metadata(version, base_url)
+                    if metadata and "version" in metadata:
+                        version_info = metadata["version"]
+                        info["version"] = f"V{version_info['release']} {version_info['firmware_type']}"
+                        info["release_note"] = metadata.get("release_note", "")
+                        info["release_note_cn"] = metadata.get("release_note_cn", "")
+                    else:
+                        info["error"] = f"Unable to get {channel} version information from metadata"
+        except asyncio.CancelledError:
+            info["error"] = f"{channel} request was cancelled"
+            get_logger(0).warning(f"{channel} version request was cancelled")
+        except Exception as e:
+            info["error"] = f"Failed to fetch {channel} version: {str(e)}"
+        return info
+
     async def compare_versions(self) -> Dict[str, Any]:
         # 初始化返回结果
         result = {
@@ -674,6 +815,10 @@ class UpdateEngine:
             "local_version": "",
             "server_model": "",
             "server_version": "",
+            "beta_version": "",
+            "beta_release_note": "",
+            "beta_release_note_cn": "",
+            "beta_error": None,
             "error": None
         }
 
@@ -688,34 +833,27 @@ class UpdateEngine:
             result["error"] = f"Failed to read local version: {str(e)}"
             return result
 
-        # 获取服务器版本
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(self.__list_sha256_url) as response:
-                    if response.status == 200:
-                        list_content = await response.text()
-                        # 解析第一行获取最新版本号
-                        first_line = list_content.splitlines()[0]
-                        version = first_line.split()[0]  # 获取第一个字段作为版本号
+        # 并发获取 Release 和 Beta 渠道版本信息
+        release_task = self.__fetch_channel_version(self.__list_sha256_url, self.__base_url, "Release")
+        beta_task = self.__fetch_channel_version(self.__beta_list_sha256_url, self.__beta_base_url, "Beta")
+        release_info, beta_info = await asyncio.gather(release_task, beta_task)
 
-                        # 获取metadata信息
-                        metadata = await self.__get_metadata(version)
-                        if metadata and "version" in metadata:
-                            version_info = metadata["version"]
-                            result["server_model"] = result["local_model"]  # 使用相同的model
-                            result["server_version"] = f"V{version_info['release']} {version_info['firmware_type']}"
-                            result["release_note"] = metadata.get("release_note", "")
-                            result["release_note_cn"] = metadata.get("release_note_cn", "")
-                        else:
-                            result["error"] = "Unable to get server version information"
-                    else:
-                        result["error"] = f"Server returned status code: {response.status}"
-        except asyncio.CancelledError:
-            # 处理请求被取消的情况
-            result["error"] = "Request was cancelled"
-            get_logger(0).warning("Version comparison request was cancelled")
-        except Exception as e:
-            result["error"] = f"Failed to fetch server version: {str(e)}"
+        # 填充 Release 信息
+        if release_info["error"]:
+            result["error"] = release_info["error"]
+        else:
+            result["server_model"] = result["local_model"]
+            result["server_version"] = release_info["version"]
+            result["release_note"] = release_info["release_note"]
+            result["release_note_cn"] = release_info["release_note_cn"]
+
+        # 填充 Beta 信息
+        if beta_info["error"]:
+            result["beta_error"] = beta_info["error"]
+        else:
+            result["beta_version"] = beta_info["version"]
+            result["beta_release_note"] = beta_info["release_note"]
+            result["beta_release_note_cn"] = beta_info["release_note_cn"]
 
         return result
 

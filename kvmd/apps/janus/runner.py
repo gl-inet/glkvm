@@ -64,10 +64,15 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         self.__janus_task: (asyncio.Task | None) = None
         self.__janus_proc: (asyncio.subprocess.Process | None) = None  # pylint: disable=no-member
 
+        # kvmd-server 通知 JanusRunner 暂停重启 janus 的标志文件路径
+        self.__disable_flag_path = "/tmp/kvmd_janus_disable"
+
         # TURN server 配置监听
         self.__turn_file_path = "/tmp/turnserver.json"
         self.__turn_file_mtime: (float | None) = None
         self.__turn_data: (dict | None) = None
+
+
 
     def run(self) -> None:
         logger = get_logger(0)
@@ -156,6 +161,8 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                 logger.info("Initializing Janus with %s ...", netcfg)
                 if netcfg.src_ip:
                     await self.__stop_janus()
+                    # 始终启动 Janus task，由 task 内部 0.1s 轮询处理 disable flag
+                    # 避免外层循环因 check_interval(10s) 导致标志移除后需等待下一轮才重启 Janus
                     await self.__start_janus(netcfg)
                 else:
                     logger.error("Empty src_ip; stopping Janus ...")
@@ -174,7 +181,7 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     prev_netcfg = netcfg
                     if netcfg.src_ip:
                         await self.__stop_janus()
-                        await self.__start_janus(netcfg)
+                        await self.__start_janus(netcfg)  # task 内部处理 disable flag
                     else:
                         logger.error("Empty src_ip; stopping Janus ...")
                         await self.__stop_janus()
@@ -189,12 +196,18 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
                     logger.info("Got new %s", netcfg)
                     if netcfg.src_ip:
                         await self.__stop_janus()
-                        await self.__start_janus(netcfg)
+                        await self.__start_janus(netcfg)  # task 内部处理 disable flag
                     else:
                         logger.error("Empty src_ip; stopping Janus ...")
                         await self.__stop_janus()
             else:
                 netcfg_diff_times = 0
+                # 若 janus task 意外退出（进程崩溃），在此检测并重启
+                if self.__janus_task and self.__janus_task.done():
+                    logger.warning("Janus task completed unexpectedly, restarting ...")
+                    self.__janus_task = None
+                    if prev_netcfg and prev_netcfg.src_ip:
+                        await self.__start_janus(prev_netcfg)
             await asyncio.sleep(self.__check_interval)
 
     async def __get_netcfg(self) -> _Netcfg:
@@ -246,6 +259,12 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
         logger = get_logger(0)
         while True:  # pylint: disable=too-many-nested-blocks
             try:
+                # 若 kvmd-server 写入了禁用标志文件，则等待直到标志被移除
+                if os.path.exists(self.__disable_flag_path):
+                    logger.info("Janus restart suppressed by disable flag, waiting ...")
+                    while os.path.exists(self.__disable_flag_path):
+                        await asyncio.sleep(0.1)
+                    logger.info("Janus disable flag removed, resuming restart ...")
                 await self.__start_janus_proc(netcfg)
                 assert self.__janus_proc is not None
                 await aioproc.log_stdout_infinite(self.__janus_proc, logger)
@@ -286,5 +305,6 @@ class JanusRunner:  # pylint: disable=too-many-instance-attributes
 
     async def __kill_janus_proc(self) -> None:
         if self.__janus_proc:
-            await aioproc.kill_process(self.__janus_proc, 5, get_logger(0))
+            # 等待时间缩短至 2s：先 SIGTERM，超时则 SIGKILL
+            await aioproc.kill_process(self.__janus_proc, 2, get_logger(0))
         self.__janus_proc = None

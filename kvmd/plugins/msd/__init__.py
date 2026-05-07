@@ -188,6 +188,9 @@ class BaseMsd(BasePlugin):
     async def partition_format(self, path: str) -> None:
         raise NotImplementedError()
 
+    def get_storage_root(self) -> str:
+        raise NotImplementedError()
+
     @contextlib.asynccontextmanager
     async def read_image(self, name: str) -> AsyncGenerator[BaseMsdReader, None]:
         _ = name

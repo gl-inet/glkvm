@@ -45,6 +45,7 @@ class _Function:
     desc:    str
     eps:     int
     enabled: bool
+    order:   int = 0  # configfs symlink 插入顺序，由 kvmd-otg start 写入 meta 文件
 
 
 class _GadgetControl:
@@ -63,49 +64,111 @@ class _GadgetControl:
         self.__eps = eps
         self.__init_delay = init_delay
 
+    def __find_dwc3(self, udc: str) -> tuple[str, str]:
+        # /sys/class/udc/<udc>/device 软链接可能直接指向平台设备，也可能指向其
+        # 子设备（不同内核/平台层级不同）。从该路径逐级向上查找携带 driver
+        # 软链接的设备目录，取第一个匹配项作为 dwc3 平台设备。
+        path = os.path.realpath(usb.get_udc_path(udc, "device"))
+        while path and path != "/":
+            driver_link = os.path.join(path, "driver")
+            if os.path.islink(driver_link):
+                device_name = os.path.basename(path)
+                driver_dir = os.path.realpath(driver_link)
+                return (device_name, driver_dir)
+            path = os.path.dirname(path)
+        raise RuntimeError(f"Cannot find DWC3 driver for UDC {udc!r}")
+
     @contextlib.contextmanager
     def __udc_stopped(self) -> Generator[None, None, None]:
         udc = usb.find_udc(self.__udc)
         udc_path = usb.get_gadget_path(self.__gadget, usb.G_UDC)
         with open(udc_path) as file:
             enabled = bool(file.read().strip())
+
+        dwc3_name: (str | None) = None
+        driver_dir: (str | None) = None
+
         if enabled:
+            # 在 unbind 之前获取 dwc3 信息（unbind 后 driver 软链接消失）
+            (dwc3_name, driver_dir) = self.__find_dwc3(udc)
+            # 先软断开 gadget
             with open(udc_path, "w") as file:
                 file.write("\n")
+            # 再 unbind dwc3 驱动，彻底复位控制器
+            with open(os.path.join(driver_dir, "unbind"), "w") as file:
+                file.write(dwc3_name)
+            # 等待 UDC 从 sysfs 消失
+            deadline = time.monotonic() + self.__init_delay
+            while time.monotonic() < deadline:
+                if not os.path.exists(usb.get_udc_path(udc)):
+                    break
+                time.sleep(0.05)
         try:
             yield
         finally:
             self.__clear_profile(recreate=True)
-            time.sleep(self.__init_delay)
-            with open(udc_path, "w") as file:
-                file.write(udc)
+            # Only restart UDC if there is at least one function in the profile.
+            # Writing UDC with an empty config causes kernel EINVAL (-22).
+            has_functions = any(
+                os.path.islink(self.__get_fdest_path(func))
+                for func in os.listdir(self.__get_fdest_path())
+            )
+            if has_functions:
+                time.sleep(0.1)
+                if dwc3_name and driver_dir:
+                    # bind dwc3 驱动，等待 UDC 重新出现
+                    with open(os.path.join(driver_dir, "bind"), "w") as file:
+                        file.write(dwc3_name)
+                    deadline = time.monotonic() + self.__init_delay
+                    while time.monotonic() < deadline:
+                        if os.path.exists(usb.get_udc_path(udc)):
+                            break
+                        time.sleep(0.05)
+                with open(udc_path, "w") as file:
+                    file.write(udc)
 
     def __clear_profile(self, recreate: bool) -> None:
         # XXX: See pikvm/pikvm#1235
         # After unbind and bind, the gadgets stop working,
         # unless we recreate their links in the profile.
         # Some kind of kernel bug.
-        for func in os.listdir(self.__get_fdest_path()):
-            path = self.__get_fdest_path(func)
-            if os.path.islink(path):
-                try:
-                    os.unlink(path)
-                    if recreate:
-                        os.symlink(self.__get_fsrc_path(func), path)
-                except (FileNotFoundError, FileExistsError):
-                    pass
+        #
+        # configfs 按 symlink 插入顺序分配 USB 接口编号，因此重建时必须按照
+        # meta 文件记录的 order 顺序逐一创建，而不能依赖 os.listdir() 的任意顺序。
+        existing = {
+            func for func in os.listdir(self.__get_fdest_path())
+            if os.path.islink(self.__get_fdest_path(func))
+        }
+        # 第一步：删除所有现有 symlink
+        for func in existing:
+            try:
+                os.unlink(self.__get_fdest_path(func))
+            except (FileNotFoundError, FileExistsError):
+                pass
+        # 第二步：按 meta 顺序（即初始创建顺序）重建 symlink
+        if recreate:
+            for meta_func in self.__read_metas():
+                if meta_func.name in existing:
+                    try:
+                        os.symlink(self.__get_fsrc_path(meta_func.name), self.__get_fdest_path(meta_func.name))
+                    except (FileNotFoundError, FileExistsError):
+                        pass
 
     def __read_metas(self) -> Generator[_Function, None, None]:
+        funcs: list[_Function] = []
         for name in sorted(os.listdir(self.__meta_path)):
             with open(os.path.join(self.__meta_path, name)) as file:
                 meta = json.loads(file.read())
                 enabled = os.path.exists(self.__get_fdest_path(meta["function"]))
-                yield _Function(
+                funcs.append(_Function(
                     name=meta["function"],
                     desc=meta["description"],
                     eps=meta["endpoints"],
                     enabled=enabled,
-                )
+                    order=meta.get("order", 0),  # 兼容旧版 meta（无 order 字段时默认 0）
+                ))
+        # 按 kvmd-otg start 写入的 order 排序，保证 symlink 插入顺序 == USB 接口编号顺序
+        yield from sorted(funcs, key=lambda f: f.order)
 
     def __get_fsrc_path(self, func: str) -> str:
         return usb.get_gadget_path(self.__gadget, usb.G_FUNCTIONS, func)
@@ -116,7 +179,7 @@ class _GadgetControl:
         return usb.get_gadget_path(self.__gadget, usb.G_PROFILE, func)
 
     def change_functions(self, enable: set[str], disable: set[str]) -> None:
-        funcs = list(self.__read_metas())
+        funcs = list(self.__read_metas())  # 已按 meta order 排序
         new: set[str] = set(func.name for func in funcs if func.enabled)
         new = (new - disable) | enable
         eps_req = sum(func.eps for func in funcs if func.name in new)
@@ -124,11 +187,19 @@ class _GadgetControl:
             raise RuntimeError(f"No available endpoints for this config: {eps_req} required, {self.__eps} is maximum")
         with self.__udc_stopped():
             self.__clear_profile(recreate=False)
-            for func in new:
+            # 必须按 meta order（即 kvmd-otg start 的创建顺序）逐一创建 symlink，
+            # 而非按 set 的任意迭代顺序，否则 configfs 会分配错误的 USB 接口编号。
+            for func in funcs:
+                if func.name not in new:
+                    continue
                 try:
-                    os.symlink(self.__get_fsrc_path(func), self.__get_fdest_path(func))
+                    os.symlink(self.__get_fsrc_path(func.name), self.__get_fdest_path(func.name))
                 except FileExistsError:
                     pass
+                except OSError as ex:
+                    # configfs on some platforms rejects function links while UDC is stopped;
+                    # log and skip so the remaining functions still get linked.
+                    print(f"--   WARN -- Failed to link function {func.name}: {ex}", flush=True)
 
     def list_functions(self) -> None:
         funcs = list(self.__read_metas())

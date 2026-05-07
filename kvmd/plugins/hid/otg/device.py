@@ -177,8 +177,11 @@ class BaseDeviceProcess(multiprocessing.Process):  # pylint: disable=too-many-in
         return n > 0 and (n & (n - 1)) == 0
 
     def __is_udc_configured(self) -> bool:
-        with open(self.__udc_state_path) as file:
-            return (file.read().strip().lower() == "configured")
+        try:
+            with open(self.__udc_state_path) as file:
+                return (file.read().strip().lower() == "configured")
+        except FileNotFoundError:
+            return False
 
     def __write_report(self, report: bytes) -> bool:
         assert report

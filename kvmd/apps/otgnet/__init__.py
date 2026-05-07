@@ -102,9 +102,11 @@ class _Service:  # pylint: disable=too-many-instance-attributes
             key: str(value)
             for (key, value) in dataclasses.asdict(netcfg).items()
         }
-        ctls: list[BaseCtl] = [
-            CustomCtl(self.__pre_start_cmd, self.__post_stop_cmd, placeholders),
-            IfaceUpCtl(self.__ip_cmd, netcfg.iface),
+
+        pre_custom = CustomCtl(self.__pre_start_cmd, self.__post_stop_cmd, placeholders)
+        iface_up = IfaceUpCtl(self.__ip_cmd, netcfg.iface)
+        # These iptables ACCEPT rules are mutually independent and can run in parallel
+        iptables_allow: list[BaseCtl] = [
             IptablesAllowEstRelCtl(self.__iptables_cmd, netcfg.iface),
             *([IptablesAllowIcmpCtl(self.__iptables_cmd, netcfg.iface)] if self.__allow_icmp else []),
             *[
@@ -116,19 +118,36 @@ class _Service:  # pylint: disable=too-many-instance-attributes
             ],
             *([IptablesForwardOut(self.__iptables_cmd, self.__forward_iface)] if self.__forward_iface else []),
             *([IptablesForwardIn(self.__iptables_cmd, netcfg.iface)] if self.__forward_iface else []),
-            IptablesDropAllCtl(self.__iptables_cmd, netcfg.iface),
-            IfaceAddIpCtl(self.__ip_cmd, netcfg.iface, f"{netcfg.iface_ip}/{netcfg.net_prefix}"),
-            *([SysctlIpv4ForwardCtl(self.__sysctl_cmd)] if self.__forward_iface else []),
-            CustomCtl(self.__post_start_cmd, self.__pre_stop_cmd, placeholders),
         ]
+        drop_all = IptablesDropAllCtl(self.__iptables_cmd, netcfg.iface)
+        add_ip = IfaceAddIpCtl(self.__ip_cmd, netcfg.iface, f"{netcfg.iface_ip}/{netcfg.net_prefix}")
+        sysctl: list[BaseCtl] = ([SysctlIpv4ForwardCtl(self.__sysctl_cmd)] if self.__forward_iface else [])
+        post_custom = CustomCtl(self.__post_start_cmd, self.__pre_stop_cmd, placeholders)
+
         if direct:
-            for ctl in ctls:
-                if not (await self.__run_ctl(ctl, True)):
-                    raise SystemExit(1)
+            if not (await self.__run_ctl(pre_custom, True)):
+                raise SystemExit(1)
+            if not (await self.__run_ctl(iface_up, True)):
+                raise SystemExit(1)
+            # Run all ACCEPT rules in parallel; DROP must come after them all
+            if not all(await asyncio.gather(*[self.__run_ctl(ctl, True) for ctl in iptables_allow])):
+                raise SystemExit(1)
+            if not (await self.__run_ctl(drop_all, True)):
+                raise SystemExit(1)
+            # Assign IP and enable forwarding are independent of each other
+            if not all(await asyncio.gather(self.__run_ctl(add_ip, True), *[self.__run_ctl(ctl, True) for ctl in sysctl])):
+                raise SystemExit(1)
+            if not (await self.__run_ctl(post_custom, True)):
+                raise SystemExit(1)
             get_logger(0).info("Ready to work")
         else:
-            for ctl in reversed(ctls):
-                await self.__run_ctl(ctl, False)
+            await self.__run_ctl(post_custom, False)
+            await self.__run_ctl(add_ip, False)
+            await self.__run_ctl(drop_all, False)
+            # Remove all ACCEPT rules in parallel
+            await asyncio.gather(*[self.__run_ctl(ctl, False) for ctl in reversed(iptables_allow)])
+            await self.__run_ctl(iface_up, False)
+            await self.__run_ctl(pre_custom, False)
             get_logger(0).info("Bye-bye")
 
     async def __run_ctl(self, ctl: BaseCtl, direct: bool) -> bool:

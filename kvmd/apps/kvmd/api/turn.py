@@ -123,7 +123,8 @@ class TurnApi:
                         self.__need_update = False
                         turn_data = self._read_turn_file()
                         prev_turn_data = turn_data
-                        yield turn_data
+                        if turn_data is not None:
+                            yield turn_data
                         
         except Exception as e:
             self._logger.error(f"Error in inotify watcher: {e}")
@@ -144,9 +145,10 @@ class TurnApi:
                     yield current_data
                 prev_data = current_data
             elif self.__need_update:
-                yield current_data
-                prev_data = current_data
                 self.__need_update = False
+                if current_data is not None:
+                    yield current_data
+                prev_data = current_data
             
             await sleep(1)  # 每秒检查一次
 

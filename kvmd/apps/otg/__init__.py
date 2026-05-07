@@ -110,11 +110,25 @@ class _GadgetConfig:
         self.__eps_used = 0
         self.__hid_instance = 0
         self.__msd_instance = 0
+        self.__func_order = 0  # 记录函数创建顺序，供 kvmd-otgconf 重建 symlink 时使用
         _mkdir(meta_path)
 
     def add_audio_mic(self, start: bool, product: str) -> None:
         eps = 2
         func = "uac2.usb0"
+        func_path = self.__create_function(func)
+        _write(join(func_path, "c_chmask"), 0)
+        _write(join(func_path, "p_chmask"), 0b11)
+        _write(join(func_path, "p_srate"), 48000)
+        _write(join(func_path, "p_ssize"), 2)
+        _write(join(func_path, "function_name"), product,optional=True) #rm1 can't support function_name
+        if start:
+            self.__start_function(func, eps)
+        self.__create_meta(func, product, eps)
+
+    def add_audio_mic_axera(self, start: bool, product: str) -> None:
+        eps = 2
+        func = "uac1.usb0"
         func_path = self.__create_function(func)
         _write(join(func_path, "c_chmask"), 0)
         _write(join(func_path, "p_chmask"), 0b11)
@@ -253,7 +267,9 @@ class _GadgetConfig:
             "function": func,
             "description": desc,
             "endpoints": eps,
+            "order": self.__func_order,  # configfs symlink 必须按此顺序创建才能保持 USB 接口编号不变
         }))
+        self.__func_order += 1
 
 
 def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,too-many-branches
@@ -261,6 +277,12 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
     # https://www.isticktoit.net/?p=1383
 
     logger = get_logger()
+
+    try:
+        with open("/proc/gl-hw-info/model", "r") as file:
+            model = file.read().strip().lower()
+    except OSError:
+        model = ""
 
     _check_config(config)
 
@@ -300,13 +322,21 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
     if config.otg.config:
         _mkdir(join(profile_path, "strings/0x409"))
         _write(join(profile_path, "strings/0x409/configuration"), config.otg.config)
-    _write(join(profile_path, "MaxPower"), config.otg.max_power)
+    if model == "rmq1":
+        _write(join(profile_path, "MaxPower"), 120)
+    else:
+        _write(join(profile_path, "MaxPower"), config.otg.max_power)
     if config.otg.remote_wakeup:
         # XXX: Should we use MaxPower=100 with Remote Wakeup?
         _write(join(profile_path, "bmAttributes"), "0xA0")
 
     gc = _GadgetConfig(gadget_path, profile_path, config.otg.meta, config.otg.endpoints)
     cod = config.otg.devices
+
+    if model == "rmq1":
+        if cod.audio.enabled:
+            logger.info("===== Microphone rmq1 %s =====", model)
+            gc.add_audio_mic_axera(cod.audio.start, cod.audio.product)
 
     if cod.rndis.enabled:
         logger.info("===== RNDIS =====")
@@ -330,7 +360,7 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         # first for cdrom
         if cod.msd.default.cdrom:
             gc.add_msd(
-                start=cod.msd.start,
+                start=cod.msd.start_cdrom,
                 user=config.otg.user,
                 inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
                 inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
@@ -338,13 +368,13 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
             )
         else:
             gc.add_msd(
-                cod.msd.start, config.otg.user, stall=False, cdrom=True, rw=False, removable=True, fua=True,
+                cod.msd.start_cdrom, config.otg.user, stall=False, cdrom=True, rw=False, removable=True, fua=True,
                 inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
                 inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
                 )
         # second for thumbdrive
         gc.add_msd(
-            cod.msd.start, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True,
+            cod.msd.start_flash, config.otg.user, stall=False, cdrom=False, rw=True, removable=True, fua=True,
             inquiry_string_cdrom=usb.make_inquiry_string(**cod.msd.default.inquiry_string.cdrom._unpack()),
             inquiry_string_flash=usb.make_inquiry_string(**cod.msd.default.inquiry_string.flash._unpack()),
             )
@@ -367,9 +397,10 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         logger.info("===== Serial =====")
         gc.add_serial(cod.serial.start)
 
-    if cod.audio.enabled:
-        logger.info("===== Microphone =====")
-        gc.add_audio_mic(cod.audio.start, cod.audio.product)
+    if model != "rmq1":
+        if cod.audio.enabled:
+            logger.info("===== Microphone %s =====", model)
+            gc.add_audio_mic(cod.audio.start, cod.audio.product)
 
     logger.info("===== Preparing complete =====")
 
