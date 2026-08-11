@@ -1,0 +1,112 @@
+kvmd/apps/kvmd/api/init.py
+  h_27ed2ef3bdd8dc 29,36,39,43-51,64-75,100,104-110
+kvmd/apps/kvmd/api/msd.py
+  h_27ed2ef3bdd8dc 53-54,150-158
+kvmd/apps/kvmd/info/extras.py
+  h_27ed2ef3bdd8dc 117
+kvmd/apps/kvmd/api/netbird.py
+  h_27ed2ef3bdd8dc 42-43,47-49,56,150-157,160-164,167-173,187-188,204-207,220-221,223-228,240-243,290-293,308-311,324-327,372-375,389-420,445-454,458-461
+kvmd/aioproc.py
+  h_27ed2ef3bdd8dc 94,103,109,111-112,120-124
+kvmd/apps/kvmd/api/recorder.py
+  h_27ed2ef3bdd8dc 25,43,101-102,119
+kvmd/plugins/atx/glatx.py
+  h_27ed2ef3bdd8dc 39-40,44,95,102,149,153-154,157,161
+kvmd/apps/otg/__init__.py
+  h_27ed2ef3bdd8dc 29,46-47,71-110,140,173,175,177-231,284-291,299-301,445-448,460-462,507-513,517-534,551-553,559,566-568
+kvmd/apps/kvmd/api/serial.py
+  h_27ed2ef3bdd8dc 1-577
+kvmd/apps/kvmd/api/netbird_daemon.py
+  h_27ed2ef3bdd8dc 1-234
+kvmd/apps/kvmd/logreader.py
+  h_27ed2ef3bdd8dc 33-34,38-40,47
+kvmd/apps/kvmd/switch/sysfs_device.py
+  h_27ed2ef3bdd8dc 10,13,27,30-55,63,65,68-69,71,76-274,311-312,329-341,344-348,352,382-383,385,388-395,397-399,401,403-478,480-494,571-573,587,589,591,593-594
+kvmd/apps/kvmd/api/common.py
+  h_27ed2ef3bdd8dc 1-233
+kvmd/apps/kvmd/auth.py
+  h_27ed2ef3bdd8dc 37,169-173,230,238,249,258-259,262-264,266,269,271,278-284,403,435,439,442-443,451,453-457,464,470,474,485-486,489-491,609,614,630,636,669,677,697,702,732,737,746,754
+kvmd/plugins/hid/otg/device.py
+  h_27ed2ef3bdd8dc 43-46,183-185,187-189,193-195,263-267
+kvmd/apps/kvmd/api/turn.py
+  h_27ed2ef3bdd8dc 44-49,89,183-184
+kvmd/keyboard/printer.py
+  h_27ed2ef3bdd8dc 25,36-37,39-59,65-68,70-75,81-91,94-134,149-154,156,158,160,162,164,166-168,173,175-213,219
+kvmd/apps/kvmd/api/tailscale.py
+  h_27ed2ef3bdd8dc 31,34,42,46-53,69,71-85,89-90,93,100,199,210-213,215-221,224-234,242-260,289-292,320-323,400-405,410-412,450,490-493,525-528,712-715,729-733
+kvmd/apps/kvmd/api/wol.py
+  h_27ed2ef3bdd8dc 38,49,98,142,165
+kvmd/validators/auth.py
+  h_27ed2ef3bdd8dc 23-24,32,45-61
+kvmd/apps/otg/mtp.py
+  h_27ed2ef3bdd8dc 1-62
+kvmd/apps/kvmd/api/cloudflare.py
+  h_27ed2ef3bdd8dc 34,46,49,52,55-61
+kvmd/utils.py
+  h_27ed2ef3bdd8dc 26-29,51-52,54-59,61,64
+kvmd/apps/kvmd/info/__init__.py
+  h_27ed2ef3bdd8dc 46
+kvmd/apps/otgconf/__init__.py
+  h_27ed2ef3bdd8dc 25,40,92-95,116-135,153-164,219-223
+kvmd/plugins/hid/otg/touch.py
+  h_27ed2ef3bdd8dc 1-105
+kvmd/apps/kvmd/hid_otg_lifecycle.py
+  h_27ed2ef3bdd8dc 1-68
+kvmd/yamlconf/loader.py
+  h_27ed2ef3bdd8dc 24,76,78,82-87
+kvmd/apps/kvmd/api/upgrade.py
+  h_27ed2ef3bdd8dc 12-16,20,26,28-29,41-43,45,63-78,100-101,110-111,134-135,138,140-144,146-159,165-175,177-194,196-257,259-273,275-309,317-374,376-383,385,393-397,409-465,468-469,472-474,493-523,527-528,530-547,550-584,701-708,795,801,807-808,817-820,822,824-825,922-934,936-942,963-965,973,987,989-990,1004-1009,1011-1015
+kvmd/validators/hid.py
+  h_27ed2ef3bdd8dc 43,64-67
+kvmd/apps/kvmd/ocr.py
+  h_27ed2ef3bdd8dc 83-84
+kvmd/plugins/hid/otg/__init__.py
+  h_27ed2ef3bdd8dc 30-31,48,66,101-128,171-176,188-190,261-267,284,310-311,320-325,337-387,397-414,417-427,430-441,445-472,479-480,484-501,503-506
+kvmd/apps/__init__.py
+  h_27ed2ef3bdd8dc 137,140,143,147,178-180,196,199,409-416,473,486-488,665,671,692-695,740-744,750-755
+kvmd/plugins/hid/otg/events.py
+  h_27ed2ef3bdd8dc 164-183
+kvmd/apps/kvmd/api/zerotier.py
+  h_27ed2ef3bdd8dc 38,49-50,53,56,59-65,111,215-218,250-254,285-288,359-463
+kvmd/apps/otg/hid/touch.py
+  h_27ed2ef3bdd8dc 1-71
+kvmd/plugins/msd/otg/__init__.py
+  h_27ed2ef3bdd8dc 50,137-139,145-148,157,161-164,168-178,237,335,544-545,547,549,557-575,774-779,807-812,859-994,1033-1044,1308-1316
+kvmd/apps/swctl/__init__.py
+  h_27ed2ef3bdd8dc 29,150
+kvmd/apps/kvmd/server.py
+  h_27ed2ef3bdd8dc 45,111,178,214,257,278,286-288,299,302,308,310,312,314-317,319-320,322-323,327-329,331-359,379-380,382,418,420-423,485,510-511,513-514,574-590,661,669,690-694,704-713,771-796
+kvmd/apps/kvmd/switch/__init__.py
+  h_27ed2ef3bdd8dc 25,148,151,154-159
+kvmd/apps/kvmd/api/system.py
+  h_27ed2ef3bdd8dc 24,28,31,53,88-89,115-123,137-162,179-182,208,233-234,283,285-293,301-316,334,337-338,347,352,356-357,359-377,379,384,809,845-846,901-905,941,966-968,975-989,991,1004,1018-1077,1079-1095,1098-1103,1537,1540,1542-1544,2268-2397,2416-2424
+kvmd/apps/kvmd/switch/sysfs_chain.py
+  h_27ed2ef3bdd8dc 62,64,66,68,70,73
+kvmd/apps/kvmd/api/auth.py
+  h_27ed2ef3bdd8dc 219,226-229,274,276-279,355,362,377
+kvmd/apps/kvmd/__init__.py
+  h_27ed2ef3bdd8dc 129-136
+kvmd/htserver.py
+  h_27ed2ef3bdd8dc 301-311,407
+kvmd/apps/kvmd/streamer.py
+  h_27ed2ef3bdd8dc 24,178-187,242-245,263-266,271-277,282-285,290-294,308-313,320-324,468-469,474-476,479,607-608,611,614-625,627-644
+kvmd/apps/kvmd/init.py
+  h_27ed2ef3bdd8dc 33,35-46,144-149,170-180,185,187,194,196-198
+kvmd/apps/kvmd/info/health.py
+  h_27ed2ef3bdd8dc 25,50-52,58,63,73-76,137-156,158-161,164-170
+kvmd/apps/kvmd/api/hid.py
+  h_27ed2ef3bdd8dc 23,62-64,116,120-128,177-193,258-268,319-328,393-400
+kvmd/plugins/hid/__init__.py
+  h_27ed2ef3bdd8dc 158-162,166,232-242,305-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "3e8dd23c4bd638a4650433664cc3b0f3b4d29395",
+  "prompts": {},
+  "humans": {
+    "h_27ed2ef3bdd8dc": {
+      "author": "zefu.du <zefu.du@gl-inet.com>"
+    }
+  }
+}
