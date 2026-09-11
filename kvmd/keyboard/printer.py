@@ -81,9 +81,12 @@ _libxkbcommon = _load_libxkbcommon()
 def _ch_to_keysym_fallback(cp: int) -> int:
     """Pure Python fallback for xkb_utf32_to_keysym.
     For Latin-1 printable range the keysym equals the Unicode code point.
-    For code points above U+00FF the keysym is 0x01000000 + code point."""
+    Above U+00FF, EuroSign retains its legacy keysym; other code points
+    use 0x01000000 + code point."""
     if (0x0020 <= cp <= 0x007E) or (0x00A0 <= cp <= 0x00FF):
         return cp
+    if cp == 0x20AC:
+        return cp  # EuroSign has a legacy keysym, used by the supplied keymaps.
     if cp > 0x00FF:
         return cp | 0x01000000
     return 0  # non-mappable control characters
@@ -91,6 +94,10 @@ def _ch_to_keysym_fallback(cp: int) -> int:
 
 def _ch_to_keysym(ch: str) -> int:
     assert len(ch) == 1
+    # Some native xkbcommon builds return the obsolete 0x13A4 alias for Euro.
+    # Our X11 keymaps consistently use EuroSign (0x20AC).
+    if ch == "€":
+        return 0x20AC
     if _libxkbcommon is not None:
         return _libxkbcommon.xkb_utf32_to_keysym(ord(ch))
     return _ch_to_keysym_fallback(ord(ch))

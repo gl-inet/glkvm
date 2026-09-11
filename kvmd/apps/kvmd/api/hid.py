@@ -156,6 +156,7 @@ class HidApi:
             if os.access(path, os.R_OK) and stat.S_ISREG(os.stat(path).st_mode):
                 keymaps.add(keymap_name)
         return {
+            "mapped_text": True,
             "keymaps": {
                 "default": self.__default_keymap_name,
                 "available": sorted(keymaps),
@@ -279,6 +280,23 @@ class HidApi:
         handler(deltas, squash)
 
     # =====
+
+    @exposed_ws("mapped_text")
+    async def __ws_mapped_text_handler(self, ws: WsSession, event: dict) -> None:
+        # One printable Unicode scalar per event bounds work and makes failure
+        # unambiguous. Await the sequence so later keys on this socket stay ordered.
+        try:
+            text = event["text"]
+            if not isinstance(text, str) or len(text) != 1 or not text.isprintable():
+                raise ValueError("Expected one printable character")
+            symmap = self.__ensure_symmap(event.get("keymap", self.__default_keymap_name))
+            events = list(text_to_evdev_keys(text, symmap))
+        except Exception:
+            await ws.send_event("mapped_text_result", {"mapped": False, "reason": "invalid"})
+            return
+        if events:
+            await self.__hid.send_key_events(events, no_ignore_keys=True, slow=False)
+        await ws.send_event("mapped_text_result", {"mapped": bool(events), "text": text})
 
     @exposed_ws("key")
     async def __ws_key_handler(self, _: WsSession, event: dict) -> None:
