@@ -34,7 +34,7 @@ from .. import init
 
 # =====
 def _get_param_path(gadget: str, instance: int, param: str) -> str:
-    return usb.get_gadget_path(gadget, usb.G_FUNCTIONS, f"mass_storage.usb{instance}/lun.0", param)
+    return usb.get_gadget_path(gadget, usb.G_FUNCTIONS, f"mass_storage.{instance}/lun.0", param)
 
 
 def _get_param(gadget: str, instance: int, param: str) -> str:
