@@ -111,6 +111,10 @@ from ..validators.hw import valid_otg_ethernet
 
 
 # =====
+_FFS_MOUSE_MOUNT = "/dev/ffs-mouse"
+
+
+# =====
 def init(
     prog: (str | None)=None,
     description: (str | None)=None,
@@ -239,6 +243,26 @@ def _patch_raw(raw_config: dict) -> None:  # pylint: disable=too-many-branches
                 if not isinstance(raw_config["otg"].get("devices"), dict):
                     raw_config["otg"]["devices"] = {}
                 raw_config["otg"]["devices"][new] = raw_config["otg"].pop(old)
+
+    # In FunctionFS mouse mode, kvmd writes the mouse reports to the FunctionFS
+    # endpoint files instead of /dev/hidgN, so the OTG HID plugin is pointed
+    # at them here to keep the mode a single switch in the config.
+    if isinstance(raw_config.get("otg"), dict) and isinstance(raw_config.get("kvmd"), dict):
+        ffs_mouse = tools.rget(raw_config, "otg", "devices", "hid", "ffs_mouse")
+        with manual_validated(ffs_mouse.get("enabled", False), "otg", "devices", "hid", "ffs_mouse", "enabled"):
+            ffs_mouse_enabled = valid_bool(ffs_mouse.get("enabled", False))
+        if ffs_mouse_enabled and tools.rget(raw_config, "kvmd", "hid").get("type") == "otg":
+            mount = str(ffs_mouse.get("mount") or _FFS_MOUSE_MOUNT)
+            mouse_alt = tools.rget(raw_config, "otg", "devices", "hid", "mouse_alt")
+            with manual_validated(mouse_alt.get("enabled", True), "otg", "devices", "hid", "mouse_alt", "enabled"):
+                mouse_alt_enabled = valid_bool(mouse_alt.get("enabled", True))
+            for (key, device) in [
+                ("mouse", os.path.join(mount, "ep1")),
+                ("mouse_alt", (os.path.join(mount, "ep2") if mouse_alt_enabled else "")),
+            ]:
+                if not isinstance(raw_config["kvmd"]["hid"].get(key), dict):
+                    raw_config["kvmd"]["hid"][key] = {}
+                raw_config["kvmd"]["hid"][key]["device"] = device
 
     if isinstance(raw_config.get("kvmd"), dict) and isinstance(raw_config["kvmd"].get("wol"), dict):
         if not isinstance(raw_config["kvmd"].get("gpio"), dict):
@@ -692,6 +716,13 @@ def _get_config_scheme() -> dict:
                     "touch": {
                         "enabled": Option(True, type=valid_bool),
                         "start": Option(False, type=valid_bool),
+                    },
+                    # Serve the mouse interfaces through FunctionFS with interrupt IN endpoints only.
+                    # Needed for USB KVM switches that reject HID interfaces with OUT endpoints
+                    # on kernels without the f_hid no_out_endpoint attribute.
+                    "ffs_mouse": {
+                        "enabled": Option(False, type=valid_bool),
+                        "mount":   Option(_FFS_MOUSE_MOUNT, type=valid_abs_path),
                     },
                 },
 
