@@ -45,6 +45,7 @@ from .hid.keyboard import make_keyboard_hid
 from .hid.mouse import make_mouse_hid
 from .hid.touch import make_touch_hid
 from . import mtp
+from . import ffshid
 
 
 # =====
@@ -299,6 +300,16 @@ class _GadgetConfig:
     def add_touch(self, start: bool, remote_wakeup: bool) -> None:
         self.__add_hid("Touch Screen", start, remote_wakeup, make_touch_hid())
 
+    def add_ffs_mouse(self, start: bool, hids: list[Hid], names: list[str]) -> None:
+        # One FunctionFS function with one interrupt IN endpoint per mouse, no OUT endpoints.
+        # The descriptors are served by the ffshid daemon, see ffshid.prepare().
+        eps = len(hids)
+        func = ffshid.MOUSE_FUNCTION
+        self.__create_function(func)
+        if start:
+            self.__start_function(func, eps)
+        self.__create_meta(func, " + ".join(names) + " (FunctionFS)", eps)
+
     def __add_hid(self, desc: str, start: bool, remote_wakeup: bool, hid: Hid) -> None:
         eps = 1
         func = f"hid.usb{self.__hid_instance}"
@@ -446,17 +457,34 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         logger.info("===== MTP =====")
         gc.add_mtp(cod.mtp.start)
 
+    ffs_mouse_hids: list[Hid] = []
+    ffs_mouse_names: list[str] = []
+
     if config.kvmd.hid.type == "otg":
         ckhm = config.kvmd.hid.mouse
+        ffs_mouse = cod.hid.ffs_mouse.enabled
         if cod.hid.keyboard.enabled:
             logger.info("===== HID-Keyboard =====")
             gc.add_keyboard(cod.hid.keyboard.start, config.otg.remote_wakeup)
+        # In FunctionFS mouse mode the configfs mouse functions are still created
+        # (so the /dev/hidgN numbering of the other HID devices does not change),
+        # but they are not linked into the profile. The ffs.mouse function
+        # replaces them in the same position of the interface order.
         if cod.hid.mouse.enabled:
             logger.info("===== HID-Mouse =====")
-            gc.add_mouse(cod.hid.mouse.start, config.otg.remote_wakeup, ckhm.absolute, ckhm.horizontal_wheel)
+            gc.add_mouse((cod.hid.mouse.start and not ffs_mouse), config.otg.remote_wakeup, ckhm.absolute, ckhm.horizontal_wheel)
+            if ffs_mouse:
+                ffs_mouse_hids.append(make_mouse_hid(ckhm.absolute, ckhm.horizontal_wheel))
+                ffs_mouse_names.append(("Absolute" if ckhm.absolute else "Relative") + " Mouse")
         if cod.hid.mouse_alt.enabled and cod.hid.mouse_alt.device:
             logger.info("===== HID-Mouse-Alt =====")
-            gc.add_mouse(cod.hid.mouse_alt.start, config.otg.remote_wakeup, (not ckhm.absolute), ckhm.horizontal_wheel)
+            gc.add_mouse((cod.hid.mouse_alt.start and not ffs_mouse), config.otg.remote_wakeup, (not ckhm.absolute), ckhm.horizontal_wheel)
+            if ffs_mouse and ffs_mouse_hids:
+                ffs_mouse_hids.append(make_mouse_hid((not ckhm.absolute), ckhm.horizontal_wheel))
+                ffs_mouse_names.append(("Relative" if ckhm.absolute else "Absolute") + " Mouse")
+        if ffs_mouse_hids:
+            logger.info("===== HID-Mouse-FFS =====")
+            gc.add_ffs_mouse(cod.hid.mouse.start, ffs_mouse_hids, ffs_mouse_names)
         if cod.hid.touch.enabled:
             logger.info("===== HID-Touch =====")
             gc.add_touch(cod.hid.touch.start, config.otg.remote_wakeup)
@@ -519,6 +547,17 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
         logger.info("Preparing uMTPrd ...")
         mtp.prepare(config.otg.init_delay)
 
+    # The daemon is started even if the function is not linked yet,
+    # so that kvmd-otgconf can enable it later without a reboot.
+    if ffs_mouse_hids:
+        logger.info("Preparing FunctionFS mouse ...")
+        try:
+            ffshid.prepare(cod.hid.ffs_mouse.mount, ffs_mouse_hids, ffs_mouse_names, config.otg.init_delay)
+        except Exception:
+            if mtp_started:
+                mtp.cleanup()
+            raise
+
     try:
         logger.info("Enabling the gadget ...")
         _write(join(gadget_path, "UDC"), udc)
@@ -531,6 +570,11 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
                 mtp.cleanup()
             except Exception as ex:
                 logger.error("Can't clean up uMTPrd after gadget start failure: %s", ex)
+        if ffs_mouse_hids:
+            try:
+                ffshid.cleanup(cod.hid.ffs_mouse.mount)
+            except Exception as ex:
+                logger.error("Can't clean up FunctionFS mouse after gadget start failure: %s", ex)
         raise
 
     logger.info("Ready to work")
@@ -551,12 +595,15 @@ def _cmd_stop(config: Section) -> None:
     if os.path.isdir(join(gadget_path, "functions/ffs.mtp")):
         logger.info("Stopping uMTPrd ...")
         mtp.cleanup()
+    if os.path.isdir(join(gadget_path, "functions", ffshid.MOUSE_FUNCTION)):
+        logger.info("Stopping FunctionFS mouse ...")
+        ffshid.cleanup(config.otg.devices.hid.ffs_mouse.mount)
 
     _unlink(join(gadget_path, "os_desc", usb.G_PROFILE_NAME), optional=True)
 
     profile_path = join(gadget_path, usb.G_PROFILE)
     for func in os.listdir(profile_path):
-        if re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func) or re.search(r"\.gs\d+$", func) or func == "ffs.mtp":
+        if re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func) or re.search(r"\.gs\d+$", func) or func.startswith("ffs."):
             _unlink(join(profile_path, func))
     _rmdir(join(profile_path, "strings/0x409"))
     _rmdir(profile_path)
@@ -565,7 +612,7 @@ def _cmd_stop(config: Section) -> None:
     for func in os.listdir(funcs_path):
         if func.startswith("uvc."):
             _cleanup_uvc_function(join(funcs_path, func))
-        elif re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func) or re.search(r"\.gs\d+$", func) or func == "ffs.mtp":
+        elif re.search(r"\.usb\d+$", func) or re.search(r"mass_storage\.\d+$", func) or re.search(r"\.gs\d+$", func) or func.startswith("ffs."):
             _rmdir(join(funcs_path, func))
 
     _rmdir(join(gadget_path, "strings/0x409"))
