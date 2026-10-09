@@ -23,6 +23,8 @@
 import sys
 import types
 
+from .logging import get_logger
+
 try:
     import user_agents as _user_agents
 except ImportError:
