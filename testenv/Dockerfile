@@ -12,7 +12,6 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		glibc \
 		pacman \
 		openssl \
-		openssl-1.1 \
 	&& pacman-db-upgrade \
 	&& pacman --noconfirm --ask=4 -Syu \
 	&& pacman --needed --noconfirm --ask=4 -S \
@@ -29,7 +28,7 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		m4 \
 		vim \
 		git \
-		libjpeg \
+		libjpeg-turbo \
 		libevent \
 		libutil-linux \
 		libbsd \
@@ -44,7 +43,6 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		python-aiohttp \
 		python-aiofiles \
 		python-async-lru \
-		python-periphery \
 		python-passlib \
 		python-pyotp \
 		python-qrcode \
