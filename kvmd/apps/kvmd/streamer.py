@@ -59,6 +59,7 @@ class _StreamerParams:
     __H264_GOP = "h264_gop"
     __ZERO_DELAY = "zero_delay"
     __VENC_MODE = "venc_mode"
+    __CHROMA_444 = "chroma_444"
 
     def __init__(  # pylint: disable=too-many-arguments
         self,
@@ -83,6 +84,7 @@ class _StreamerParams:
 
         zero_delay: bool,
         venc_mode: str,
+        chroma_444: bool,
     ) -> None:
 
         self.__has_quality = bool(quality)
@@ -113,6 +115,9 @@ class _StreamerParams:
         # Always include venc_mode parameter
         self.__params[self.__VENC_MODE] = venc_mode
 
+        # Always include chroma_444 parameter
+        self.__params[self.__CHROMA_444] = chroma_444
+
     def get_features(self) -> dict:
         return {
             self.__QUALITY: self.__has_quality,
@@ -121,6 +126,7 @@ class _StreamerParams:
             "h265": self.__has_h264,
             "zero_delay": True,  # Always available
             "venc_mode": True,   # Always available
+            "chroma_444": True,  # Always available
         }
 
     def get_limits(self) -> dict:
@@ -162,6 +168,10 @@ class _StreamerParams:
         if self.__VENC_MODE in params:
             if params[self.__VENC_MODE] in ["smart", "normal"]:
                 new_params[self.__VENC_MODE] = params[self.__VENC_MODE]
+
+        # Handle chroma_444 parameter (boolean, no limits check needed)
+        if self.__CHROMA_444 in params:
+            new_params[self.__CHROMA_444] = bool(params[self.__CHROMA_444])
 
         self.__params = new_params
 

@@ -110,6 +110,10 @@ export function Streamer() {
 			__sendParam("zero_delay", zero_delay);
 		});
 
+		tools.storage.bindSimpleSwitch($("stream-chroma-444-switch"), "stream.chroma_444", false, function(chroma_444) {
+			__sendParam("chroma_444", chroma_444);
+		});
+
 		tools.radio.setOnClick("stream-venc-mode-radio", __clickVencModeRadio, false);
 
 		tools.el.setOnClick($("stream-screenshot-button"), __clickScreenshotButton);
@@ -274,6 +278,13 @@ export function Streamer() {
 				tools.storage.set("stream.venc_mode", params.venc_mode);
 			}
 
+			// 同步 chroma_444 开关状态
+			if (params && params.chroma_444 !== undefined) {
+				let chroma444Switch = $("stream-chroma-444-switch");
+				chroma444Switch.checked = params.chroma_444;
+				tools.storage.setBool("stream.chroma_444", params.chroma_444);
+			}
+
 			tools.feature.setEnabled($("stream-quality"), (s.encoder.quality > 0));
 
 			if (params && params.video_format !== undefined) {
@@ -305,6 +316,7 @@ export function Streamer() {
 		tools.el.setEnabled($("stream-h264-gop-slider"), enabled);
 		tools.radio.setEnabled("stream-video-format-radio", enabled);
 		tools.el.setEnabled($("stream-zero-delay-switch"), enabled);
+		tools.el.setEnabled($("stream-chroma-444-switch"), enabled);
 	};
 
 	var __setInfo = function(is_active, online, text) {

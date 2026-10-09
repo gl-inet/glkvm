@@ -66,6 +66,7 @@ from ...validators.kvm import valid_stream_h264_bitrate
 from ...validators.kvm import valid_stream_h264_gop
 from ...validators.kvm import valid_stream_zero_delay
 from ...validators.kvm import valid_stream_venc_mode
+from ...validators.kvm import valid_stream_chroma_444
 
 from .auth import AuthManager
 from .init import InitManager
@@ -521,6 +522,7 @@ class KvmdServer(HttpServer):  # pylint: disable=too-many-arguments,too-many-ins
             ("h264_gop",     valid_stream_h264_gop,     StreamerH264NotSupported),
             ("zero_delay",   valid_stream_zero_delay,   None),
             ("venc_mode",    valid_stream_venc_mode,    None),
+            ("chroma_444",   valid_stream_chroma_444,   None),
         ]:
             value = req.query.get(name)
             if value:

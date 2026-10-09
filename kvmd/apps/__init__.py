@@ -97,6 +97,7 @@ from ..validators.kvm import valid_stream_h264_bitrate
 from ..validators.kvm import valid_stream_h264_gop
 from ..validators.kvm import valid_stream_zero_delay
 from ..validators.kvm import valid_stream_venc_mode
+from ..validators.kvm import valid_stream_chroma_444
 
 from ..validators.ugpio import valid_ugpio_driver
 from ..validators.ugpio import valid_ugpio_channel
@@ -551,6 +552,8 @@ def _get_config_scheme() -> dict:
                 "zero_delay": Option(False if model == "rm10" else True, type=valid_stream_zero_delay),
 
                 "venc_mode": Option("normal", type=valid_stream_venc_mode),
+
+                "chroma_444": Option(False, type=valid_stream_chroma_444),
 
                 "unix":    Option("/run/kvmd/ustreamer.sock", type=valid_abs_path, unpack_as="unix_path"),
                 "timeout": Option(2.0, type=valid_float_f01),
