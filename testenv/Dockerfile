@@ -12,7 +12,6 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		glibc \
 		pacman \
 		openssl \
-		openssl-1.1 \
 	&& pacman-db-upgrade \
 	&& pacman --noconfirm --ask=4 -Syu \
 	&& pacman --needed --noconfirm --ask=4 -S \
@@ -29,7 +28,7 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		m4 \
 		vim \
 		git \
-		libjpeg \
+		libjpeg-turbo \
 		libevent \
 		libutil-linux \
 		libbsd \
@@ -44,7 +43,6 @@ RUN pacman --noconfirm --ask=4 -Syy \
 		python-aiohttp \
 		python-aiofiles \
 		python-async-lru \
-		python-periphery \
 		python-passlib \
 		python-pyotp \
 		python-qrcode \
@@ -92,8 +90,11 @@ WORKDIR /
 ARG USTREAMER_MIN_VERSION
 ENV USTREAMER_MIN_VERSION $USTREAMER_MIN_VERSION
 RUN echo $USTREAMER_MIN_VERSION
-RUN git clone https://github.com/pikvm/ustreamer \
+COPY testenv/ustreamer-chroma-444.patch /chroma-444.patch
+RUN git clone --branch v6.67 --depth 1 https://github.com/pikvm/ustreamer \
 	&& cd ustreamer \
+	&& git apply /chroma-444.patch \
+	&& pip install --break-system-packages installer \
 	&& make WITH_PYTHON=1 PREFIX=/usr DESTDIR=/ install \
 	&& cd - \
 	&& rm -rf ustreamer

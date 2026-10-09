@@ -117,3 +117,8 @@ def valid_stream_zero_delay(arg: Any) -> bool:
 
 def valid_stream_venc_mode(arg: Any) -> str:
     return check_string_in_list(arg, "stream venc mode", ["smart", "normal"])
+
+
+def valid_stream_chroma_444(arg: Any) -> bool:
+    from .basic import valid_bool
+    return valid_bool(arg)

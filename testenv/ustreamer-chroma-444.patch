@@ -1,0 +1,137 @@
+diff --git a/src/ustreamer/blank.c b/src/ustreamer/blank.c
+index 09b1b00..e3b0862 100644
+--- a/src/ustreamer/blank.c
++++ b/src/ustreamer/blank.c
+@@ -42,7 +42,7 @@ us_blank_s *us_blank_init(void) {
+ 
+ void us_blank_draw(us_blank_s *blank, const char *text, uint width, uint height) {
+ 	us_frametext_draw(blank->ft, text, width, height);
+-	us_cpu_encoder_compress(blank->raw, blank->jpeg, 95);
++	us_cpu_encoder_compress(blank->raw, blank->jpeg, 95, false);
+ }
+ 
+ void us_blank_destroy(us_blank_s *blank) {
+diff --git a/src/ustreamer/encoder.c b/src/ustreamer/encoder.c
+index f059466..c8da8ae 100644
+--- a/src/ustreamer/encoder.c
++++ b/src/ustreamer/encoder.c
+@@ -162,6 +162,7 @@ void us_encoder_open(us_encoder_s *enc, us_capture_s *cap) {
+ 	US_MUTEX_LOCK(run->mutex);
+ 	run->type = type;
+ 	run->quality = quality;
++	run->chroma_444 = enc->chroma_444;
+ 	US_MUTEX_UNLOCK(run->mutex);
+ 
+ 	enc->run->pool = us_workers_pool_init(
+@@ -210,7 +211,7 @@ static bool _worker_run_job(us_worker_s *wr) {
+ 
+ 	if (run->type == US_ENCODER_TYPE_CPU) {
+ 		US_LOG_VERBOSE("Compressing JPEG using CPU: worker=%s, buffer=%u", wr->name, i);
+-		us_cpu_encoder_compress(src, dest, run->quality);
++		us_cpu_encoder_compress(src, dest, run->quality, run->chroma_444);
+ 
+ 	} else if (run->type == US_ENCODER_TYPE_HW) {
+ 		US_LOG_VERBOSE("Compressing JPEG using HW (just copying): worker=%s, buffer=%u", wr->name, i);
+diff --git a/src/ustreamer/encoder.h b/src/ustreamer/encoder.h
+index 4f9ceee..2e79114 100644
+--- a/src/ustreamer/encoder.h
++++ b/src/ustreamer/encoder.h
+@@ -45,6 +45,7 @@ typedef enum {
+ typedef struct {
+ 	us_encoder_type_e	type;
+ 	uint				quality;
++	bool				chroma_444;
+ 	pthread_mutex_t		mutex;
+ 
+ 	uint				n_m2ms;
+@@ -57,6 +58,7 @@ typedef struct {
+ 	us_encoder_type_e	type;
+ 	uint				n_workers;
+ 	char				*m2m_path;
++	bool				chroma_444;
+ 
+ 	us_encoder_runtime_s *run;
+ } us_encoder_s;
+diff --git a/src/ustreamer/encoders/cpu/encoder.c b/src/ustreamer/encoders/cpu/encoder.c
+index 665b3b6..355ef94 100644
+--- a/src/ustreamer/encoders/cpu/encoder.c
++++ b/src/ustreamer/encoders/cpu/encoder.c
+@@ -64,7 +64,7 @@ static boolean _jpeg_empty_output_buffer(j_compress_ptr jpeg);
+ static void _jpeg_term_destination(j_compress_ptr jpeg);
+ 
+ 
+-void us_cpu_encoder_compress(const us_frame_s *src, us_frame_s *dest, uint quality) {
++void us_cpu_encoder_compress(const us_frame_s *src, us_frame_s *dest, uint quality, bool chroma_444) {
+ 	// This function based on compress_image_to_jpeg() from mjpg-streamer
+ 
+ 	us_frame_encoding_begin(src, dest, V4L2_PIX_FMT_JPEG);
+@@ -103,6 +103,12 @@ void us_cpu_encoder_compress(const us_frame_s *src, us_frame_s *dest, uint quali
+ 	}
+ 
+ 	jpeg_set_defaults(&jpeg);
++	if (chroma_444) {
++		// Disable chroma subsampling (4:4:4): makes small text much sharper.
++		// Must be set after jpeg_set_defaults() and before jpeg_start_compress().
++		jpeg.comp_info[0].h_samp_factor = 1;
++		jpeg.comp_info[0].v_samp_factor = 1;
++	}
+ 	jpeg_set_quality(&jpeg, quality, TRUE);
+ 
+ 	jpeg_start_compress(&jpeg, TRUE);
+diff --git a/src/ustreamer/encoders/cpu/encoder.h b/src/ustreamer/encoders/cpu/encoder.h
+index 65aa031..833bdd2 100644
+--- a/src/ustreamer/encoders/cpu/encoder.h
++++ b/src/ustreamer/encoders/cpu/encoder.h
+@@ -26,4 +26,4 @@
+ #include "../../../libs/frame.h"
+ 
+ 
+-void us_cpu_encoder_compress(const us_frame_s *src, us_frame_s *dest, uint quality);
++void us_cpu_encoder_compress(const us_frame_s *src, us_frame_s *dest, uint quality, bool chroma_444);
+diff --git a/src/ustreamer/options.c b/src/ustreamer/options.c
+index 8a177ed..a8e4eff 100644
+--- a/src/ustreamer/options.c
++++ b/src/ustreamer/options.c
+@@ -92,6 +92,7 @@ enum _US_OPT_VALUES {
+ 	_O_DEVICE_TIMEOUT = 10000,
+ 	_O_DEVICE_ERROR_DELAY,
+ 	_O_FORMAT_SWAP_RGB,
++	_O_CHROMA_444,
+ 	_O_M2M_DEVICE,
+ 	_O_MEDIA_DEVICE,
+ 	_O_MEDIA_ENTITY_NAME,
+@@ -175,6 +176,7 @@ static const struct option _LONG_OPTS[] = {
+ 	{"resolution",				required_argument,	NULL,	_O_RESOLUTION},
+ 	{"format",					required_argument,	NULL,	_O_FORMAT},
+ 	{"format-swap-rgb",			no_argument,		NULL,	_O_FORMAT_SWAP_RGB},
++	{"chroma-444",				required_argument,	NULL,	_O_CHROMA_444},
+ 	{"tv-standard",				required_argument,	NULL,	_O_TV_STANDARD},
+ 	{"io-method",				required_argument,	NULL,	_O_IO_METHOD},
+ 	{"desired-fps",				required_argument,	NULL,	_O_DESIRED_FPS},
+@@ -438,6 +440,16 @@ int us_options_parse(
+ 			case _O_FORMAT:				OPT_PARSE_ENUM("pixel format", cap->format, us_capture_parse_format, US_FORMATS_STR);
+ #			pragma GCC diagnostic pop
+ 			case _O_FORMAT_SWAP_RGB:	OPT_SET(cap->format_swap_rgb, true);
++			case _O_CHROMA_444:
++				if (!strcasecmp(optarg, "true") || !strcasecmp(optarg, "yes") || !strcmp(optarg, "1")) {
++					enc->chroma_444 = true;
++				} else if (!strcasecmp(optarg, "false") || !strcasecmp(optarg, "no") || !strcmp(optarg, "0")) {
++					enc->chroma_444 = false;
++				} else {
++					printf("Invalid value for '--chroma-444=%s': use true or false\n", optarg);
++					return -1;
++				}
++				break;
+ 			case _O_TV_STANDARD:		OPT_PARSE_ENUM("TV standard", cap->standard, us_capture_parse_standard, US_STANDARDS_STR);
+ 			case _O_IO_METHOD:			OPT_PARSE_ENUM("IO method", cap->io_method, us_capture_parse_io_method, US_IO_METHODS_STR);
+ 			case _O_DESIRED_FPS:		OPT_NUMBER("--desired-fps", stream->desired_fps, 0, US_VIDEO_MAX_FPS, 0);
+@@ -714,6 +726,9 @@ static void _help(
+ 	SAY("                                           Available: %s; default: YUYV.\n", US_FORMATS_STR);
+ 	SAY("       --format-swap-rgb  ──────────────── Enable R-G-B order swapping: RGB to BGR and vice versa.");
+ 	SAY("                                           Default: disabled.\n");
++	SAY("       --chroma-444 <true|false>  ──────── Disable chroma subsampling (4:4:4) in CPU JPEG encoding.");
++	SAY("                                           Makes small text much sharper at the cost of a larger file size.");
++	SAY("                                           Default: false.\n");
+ 	SAY("    -a|--tv-standard <std>  ────────────── Force TV standard.");
+ 	SAY("                                           Available: %s; default: disabled.\n", US_STANDARDS_STR);
+ 	SAY("    -I|--io-method <method>  ───────────── Set V4L2 IO method (see kernel documentation).");

@@ -1,4 +1,6 @@
 pyserial-asyncio
+python-periphery
+evdev
 pyghmi
 spidev
 pyrad
