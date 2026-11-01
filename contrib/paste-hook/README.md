@@ -37,6 +37,29 @@ contrib/paste-hook/apply_paste_hook.sh remove
 GLKVM_HOST=192.168.8.123 GLKVM_PORT=22 contrib/paste-hook/apply_paste_hook.sh install
 ```
 
+### Windows
+
+From Windows 10/11 with the built-in OpenSSH client (Settings > System >
+Optional features > "OpenSSH Client"), in PowerShell 5.1 or 7:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+.\contrib\paste-hook\apply_paste_hook.ps1 install
+.\contrib\paste-hook\apply_paste_hook.ps1 status
+.\contrib\paste-hook\apply_paste_hook.ps1 remove
+
+# or without changing the policy, and with a different address:
+$env:GLKVM_HOST = '192.168.8.123'
+powershell -ExecutionPolicy Bypass -File contrib\paste-hook\apply_paste_hook.ps1 install
+```
+
+Windows OpenSSH cannot share one connection between steps, so ssh asks for
+the root password once per connection (twice for `install` and `remove`,
+once for `status`); an SSH key avoids the prompts. The script never stores or
+reads the password. `contrib/paste-hook/.gitattributes` keeps the device-side
+files checked out with LF, and the script also strips CRs on the device after
+upload.
+
 `install` copies the files to the device, activates the hook immediately and
 prints a check (`grep -c paste-hook .../index.html` should print `1`). Then
 **hard-reload** the UI (Cmd+Shift+R, or restart the GLKVM app). No reboot is
@@ -50,6 +73,21 @@ Installed files:
 | `/etc/kvmd/user/paste-hook/paste-hook.js` | the script (persistent master copy) |
 | `/etc/kvmd/user/scripts/S90paste-hook.sh` | boot hook, run by `/etc/init.d/S99custom` |
 | `/usr/share/kvmd/glweb/paste-hook.js`, `index.html` | regenerated at every boot |
+
+## Client shortcut
+
+| Client OS | Paste shortcut |
+|-----------|----------------|
+| macOS | Cmd+V |
+| Windows / Linux | Ctrl+V |
+
+Cmd+Shift+V / Ctrl+Shift+V are not intercepted and are still forwarded as
+keystrokes to the remote host, so a remote-side paste is still possible.
+
+Tested end-to-end only from a macOS client. Windows/Linux clients use the same
+code path (the Ctrl+V keydown reaches the page, and Chromium's native paste
+then fires the `paste` event the hook reads), but this has not been tested
+from a Windows workstation yet.
 
 ## Persistence and firmware upgrades
 
