@@ -1,3 +1,6 @@
 * keymaps:
   - https://github.com/qemu/qemu/blob/master/pc-bios/keymaps
   - https://github.com/j0xaf/keymap-us-altgr-intl/blob/main/keymap-us-altgr-intl
+
+* paste-hook:
+  - RDP-style clipboard paste (Cmd+V / Ctrl+V) for the device web UI and the GLKVM app, see paste-hook/README.md
