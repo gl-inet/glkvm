@@ -145,6 +145,20 @@ def _check_config(config: Section) -> None:
 
 
 # =====
+def _profile_needs_iad(profile_path: str) -> bool:
+    for func in os.listdir(profile_path):
+        if func.startswith(("uvc.", "uac2.", "ecm.", "ncm.", "rndis.", "acm.")):
+            return True
+    return False
+
+
+def _write_device_class(gadget_path: str, iad: bool) -> None:
+    _write(join(gadget_path, "bDeviceClass"), 239 if iad else 0)
+    _write(join(gadget_path, "bDeviceSubClass"), 2 if iad else 0)
+    _write(join(gadget_path, "bDeviceProtocol"), 1 if iad else 0)
+
+
+# =====
 class _GadgetConfig:
     def __init__(self, gadget_path: str, profile_path: str, meta_path: str, eps: int) -> None:
         self.__gadget_path = gadget_path
@@ -179,9 +193,6 @@ class _GadgetConfig:
         config_path = join(self.__gadget_path, "configs/b.1")
 
         _write(join(self.__gadget_path, "bcdDevice"), 0x0310)
-        _write(join(self.__gadget_path, "bDeviceProtocol"), 1)
-        _write(join(self.__gadget_path, "bDeviceSubClass"), 2)
-        _write(join(self.__gadget_path, "bDeviceClass"), 239)
 
         _write(join(func_path, "streaming_maxpacket"), 3072)
         _write(join(func_path, "uvc_num_request"), 2)
@@ -511,6 +522,8 @@ def _cmd_start(config: Section) -> None:  # pylint: disable=too-many-statements,
     if cod.camera.enabled:
         logger.info("===== Camera =====")
         gc.add_camera(cod.camera.start, cod.camera.product)
+
+    _write_device_class(gadget_path, _profile_needs_iad(profile_path))
 
     logger.info("===== Preparing complete =====")
 
