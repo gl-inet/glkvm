@@ -134,6 +134,37 @@ def _try_dead_key_decompose(
     return [dead_keys, base_keys]
 
 
+# Spacing accents that some layouts (be, ...) only provide as dead keys.
+# If the keymap puts such a character on the very same key + modifiers as
+# the matching dead key, the target needs a following Space to emit it.
+_SPACING_TO_DEAD_KEYSYM: dict[int, int] = {
+    0x0060: 0xFE50,  # grave        → dead_grave
+    0x00B4: 0xFE51,  # acute        → dead_acute
+    0x005E: 0xFE52,  # asciicircum  → dead_circumflex
+    0x007E: 0xFE53,  # asciitilde   → dead_tilde
+    0x00A8: 0xFE57,  # diaeresis    → dead_diaeresis
+}
+
+
+def _first_usable(keys: dict[int, int]) -> (tuple[int, int] | None):
+    for (modifiers, key) in keys.items():
+        if not (modifiers & SymmapModifiers.CTRL):
+            return (modifiers, key)
+    return None
+
+
+def _is_on_dead_key(
+    keysym: int,
+    keys: dict[int, int],
+    symmap: dict[int, dict[int, int]],
+) -> bool:
+    dead_keys = symmap.get(_SPACING_TO_DEAD_KEYSYM.get(keysym, 0))
+    if not dead_keys:
+        return False
+    first = _first_usable(keys)
+    return (first is not None and first == _first_usable(dead_keys))
+
+
 # =====
 def text_to_evdev_keys(  # pylint: disable=too-many-branches
     text: str,
@@ -170,7 +201,11 @@ def text_to_evdev_keys(  # pylint: disable=too-many-branches
             if not ch.isprintable():
                 continue
             try:
-                key_sequence = [symmap[_ch_to_keysym(ch)]]
+                keysym = _ch_to_keysym(ch)
+                key_sequence = [symmap[keysym]]
+                if _is_on_dead_key(keysym, key_sequence[0], symmap):
+                    # Dead key + Space = the accent itself (` ~ ´ ¨ ^)
+                    key_sequence.append({0: ecodes.KEY_SPACE})
             except Exception:
                 # Character not directly in symmap — try dead-key
                 # decomposition for accented characters like á é ñ etc.
