@@ -67,8 +67,8 @@ export function Recorder() {
 		__recordEvent(ev);
 	};
 
-	self.recordPrintEvent = function(text, keymap, slow) {
-		__recordEvent({"event_type": "print", "event": {"text": text, "keymap": keymap, "slow": slow}});
+	self.recordPrintEvent = function(text, keymap, slow, variable=false, super_variable=false, speed=0) {
+		__recordEvent({"event_type": "print", "event": {"text": text, "keymap": keymap, "slow": slow, "variable": variable, "super_variable": super_variable, "speed": speed}});
 	};
 
 	self.recordAtxButtonEvent = function(button) {
@@ -164,6 +164,15 @@ export function Recorder() {
 							}
 							if (ev.event.slow !== undefined) {
 								__checkType(ev.event.slow, "boolean", "Non-bool slow");
+							}
+
+							if (ev.event.speed !== undefined && (!Number.isInteger(ev.event.speed) || ev.event.speed < 0 || ev.event.speed > 1000)) {
+								throw new Error("Invalid typing speed");
+							}
+							for (let mode of ["variable", "super_variable"]) {
+								if (ev.event[mode] !== undefined) {
+									__checkType(ev.event[mode], "boolean", `Non-bool ${mode}`);
+								}
 							}
 
 						} else if (ev.event_type === "key") {
@@ -293,6 +302,12 @@ export function Recorder() {
 				if (ev.event.slow !== undefined) {
 					params["slow"] = ev.event.slow;
 				}
+				for (let mode of ["variable", "super_variable"]) {
+					if (ev.event[mode] !== undefined) {
+						params[mode] = ev.event[mode];
+					}
+				}
+				if (ev.event.speed !== undefined) params.speed = ev.event.speed;
 				tools.httpPost("api/hid/print", params, function(http) {
 					if (http.status === 413) {
 						wm.error("Too many text for paste!");
@@ -303,7 +318,7 @@ export function Recorder() {
 					} else if (http.status === 200) {
 						__play_timer = setTimeout(() => __runEvents(index + 1, time), 0);
 					}
-				}, ev.event.text, "text/plain");
+				}, ev.event.text, "text/plain", 7 * 24 * 3600 * 1000);
 				return;
 
 			} else if (ev.event_type === "atx_button") {

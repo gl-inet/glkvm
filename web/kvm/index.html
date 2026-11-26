@@ -841,9 +841,10 @@
               </td>
             </tr>
           </table>
+          <div class="text"><button id="hid-pak-pause-button" disabled>Pause typing</button> <button type="button" class="hid-pak-help" title="Pause or resume at a character boundary. Change typing settings while paused; they apply when typing resumes. Automatic pauses may finish before typing resumes." aria-label="About Pause typing" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button></div>
           <table class="kv">
             <tr>
-                  <td>Slow typing:
+                  <td>Slow typing: <button type="button" class="hid-pak-help" title="Uses the original slow HID timing (30 ms per key event instead of 5 ms). Custom speed overrides it." aria-label="About Slow typing" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button>
                   </td>
                   <td align="right">
                     <div class="switch-box">
@@ -853,7 +854,36 @@
                   </td>
             </tr>
             <tr>
-                  <td>Hide input text:
+                  <td>Variable typing: <button type="button" class="hid-pak-help" title="Adds a 0.5% chance of a random pause at each character boundary after the first character (about 200 characters on average). Each automatic pause lasts 0.1 to 30 seconds." aria-label="About Variable typing" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button></td>
+                  <td align="right">
+                    <div class="switch-box">
+                      <input type="checkbox" id="hid-pak-variable-switch">
+                      <label for="hid-pak-variable-switch"><span class="switch-inner"></span><span class="switch"></span></label>
+                    </div>
+                  </td>
+            </tr>
+            <tr>
+                  <td>Super variable typing: <button type="button" class="hid-pak-help" title="Randomly varies the original normal or slow key-event rate by plus or minus 25% for each character. With custom speed enabled, varies the entered WPM by plus or minus 25%." aria-label="About Super variable typing" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button></td>
+                  <td align="right">
+                    <div class="switch-box">
+                      <input type="checkbox" id="hid-pak-super-variable-switch">
+                      <label for="hid-pak-super-variable-switch"><span class="switch-inner"></span><span class="switch"></span></label>
+                    </div>
+                  </td>
+            </tr>
+            <tr>
+                  <td>Custom typing speed: <button type="button" class="hid-pak-help" title="Uses your entered target WPM instead of the original normal or slow speed. Super variable adds plus or minus 25%. Actual speed depends on HID overhead." aria-label="About Custom typing speed" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button></td>
+                  <td align="right"><div class="switch-box">
+                      <input type="checkbox" id="hid-pak-custom-switch">
+                      <label for="hid-pak-custom-switch"><span class="switch-inner"></span><span class="switch"></span></label>
+                  </div></td>
+            </tr>
+            <tr id="hid-pak-speed-row" hidden>
+                  <td><label for="hid-pak-speed">Typing speed (WPM):</label></td>
+                  <td align="right"><input id="hid-pak-speed" type="number" min="1" max="1000" step="1" value="75" style="width: 85px"></td>
+            </tr>
+            <tr>
+                  <td>Hide input text: <button type="button" class="hid-pak-help" title="Masks the text in the input box. It does not encrypt the pasted text." aria-label="About Hide input text" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button>
                   </td>
                   <td align="right">
                     <div class="switch-box">
@@ -863,7 +893,7 @@
                   </td>
             </tr>
             <tr>
-                  <td>Ask paste confirmation:
+                  <td>Ask paste confirmation: <button type="button" class="hid-pak-help" title="Asks for confirmation before sending text as keyboard events." aria-label="About Ask paste confirmation" style="padding: 0 5px; border-radius: 50%; font-size: 12px;">i</button>
                   </td>
                   <td align="right">
                     <div class="switch-box">

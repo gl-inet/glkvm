@@ -27,6 +27,8 @@ import stat
 import functools
 import itertools
 import struct
+import random
+import re
 
 from typing import Iterable
 from typing import Callable
@@ -37,6 +39,7 @@ from aiohttp.web import Response
 from ....keyboard.mappings import WEB_TO_EVDEV
 from ....keyboard.keysym import build_symmap
 from ....keyboard.printer import text_to_evdev_keys
+from ....keyboard.printer import text_to_evdev_key_batches
 
 from ....mouse import MOUSE_TO_EVDEV
 
@@ -68,6 +71,17 @@ _JIGGLER_SCHEDULE_PATH = "/etc/kvmd/user/jiggler_schedule.json"
 
 
 # =====
+_PasteSettings = tuple[bool, bool, bool, int]
+
+
+class _PasteSession:
+    def __init__(self, settings: _PasteSettings) -> None:
+        self.settings = settings
+        self.gate = asyncio.Event()
+        self.gate.set()
+        self.revision = 0
+
+
 class HidApi:
     def __init__(
         self,
@@ -76,6 +90,8 @@ class HidApi:
     ) -> None:
 
         self.__hid = hid
+        self.__paste_sessions: dict[str, _PasteSession] = {}
+        self.__paste_active = False
 
         self.__keymaps_dir_path = os.path.dirname(keymap_path)
         self.__default_keymap_name = os.path.basename(keymap_path)
@@ -173,10 +189,23 @@ class HidApi:
         if limit > 0:
             text = text[:limit]
         symmap = self.__ensure_symmap(req.query.get("keymap", self.__default_keymap_name))
-        slow = valid_bool(req.query.get("slow", False))
-        paste_task = asyncio.ensure_future(self.__hid.send_key_events(
-            text_to_evdev_keys(text, symmap), no_ignore_keys=True, slow=slow,
-        ))
+        settings = self.__read_paste_settings(req)
+        token = req.query.get("paste_id", "")
+        if token and not re.fullmatch(r"[a-f0-9]{32}", token):
+            raise_error(token, "paste_id")
+        if self.__paste_active:
+            return make_json_response({"error": "Another paste is active"}, status=409)
+        session = _PasteSession(settings)
+        self.__paste_active = True
+        if token:
+            self.__paste_sessions[token] = session
+        # Preserve the original full-text path for unmodified legacy API calls.
+        if not token and not any(settings[1:]):
+            paste_task = asyncio.ensure_future(self.__hid.send_key_events(
+                text_to_evdev_keys(text, symmap), no_ignore_keys=True, slow=settings[0],
+            ))
+        else:
+            paste_task = asyncio.ensure_future(self.__type_text(text, symmap, session))
         async def _wait_disconnect() -> None:
             while not paste_task.done():
                 if req.transport is None or req.transport.is_closing():
@@ -188,10 +217,127 @@ class HidApi:
             await paste_task
         except asyncio.CancelledError:
             self.__hid.clear_events()
+        except Exception:
+            self.__hid.clear_events()
+            raise
         finally:
             if not checker.done():
                 checker.cancel()
+            self.__paste_sessions.pop(token, None)
+            self.__paste_active = False
         return make_json_response()
+
+    @staticmethod
+    def __read_paste_settings(req: Request) -> _PasteSettings:
+        slow = valid_bool(req.query.get("slow", False))
+        variable = valid_bool(req.query.get("variable", False))
+        super_variable = valid_bool(req.query.get("super_variable", False))
+        speed = int(valid_int_f0(req.query.get("speed", 0)))
+        if speed > 1000:
+            raise_error(speed, "typing speed (0-1000 WPM)")
+        return (slow, variable, super_variable, speed)
+
+    @exposed_http("POST", "/hid/print_pause")
+    async def __print_pause_handler(self, req: Request) -> Response:
+        session = self.__paste_sessions.get(req.query.get("paste_id", ""))
+        if session is None:
+            return make_json_response({"error": "No matching active paste"}, status=409)
+
+        # Settings-only requests do not change the pause state. Resume requests
+        # include the latest complete settings and apply them before opening the gate.
+        revision = None
+        settings = None
+        if "revision" in req.query:
+            revision = int(valid_int_f0(req.query["revision"]))
+            settings = self.__read_paste_settings(req)
+        paused = None
+        if "paused" in req.query or revision is None:
+            paused = valid_bool(req.query.get("paused", True))
+        # A delayed request from an earlier UI edit cannot overwrite a newer one.
+        if revision is not None and settings is not None and revision >= session.revision:
+            session.settings = settings
+            session.revision = revision
+        if paused is not None:
+            if paused:
+                session.gate.clear()
+            else:
+                session.gate.set()
+        return make_json_response({"paused": not session.gate.is_set(), "revision": session.revision})
+
+    async def __type_text(
+        self,
+        text: str,
+        symmap: dict[int, dict[int, int]],
+        session: _PasteSession,
+    ) -> None:
+        # Use the original event sequence, including modifier transitions between
+        # characters. Do not regenerate each character as an isolated key sequence.
+        held: list[int] = []
+        typed = 0
+        loop = asyncio.get_running_loop()
+        last_slow = False
+        last_delay: float | None = None
+
+        async def send(keys: list[tuple[int, bool]], slow: bool, delay: float | None = None) -> None:
+            if delay is None:
+                # The original HID routine provides exactly the original normal/slow timing.
+                await self.__hid.send_key_events(keys, no_ignore_keys=True, slow=slow)
+            else:
+                # Same per-event operation as the original BaseHid.send_key_events,
+                # using an overridden delay only when Super variable is enabled.
+                for key, state in keys:
+                    await asyncio.sleep(delay)
+                    self.__hid.send_key_event(key, state, False)
+            for key, state in keys:
+                if state and key not in held:
+                    held.append(key)
+                elif not state and key in held:
+                    held.remove(key)
+
+        async def pause(duration: float = 0.0) -> None:
+            # The original sequence may hold Shift/AltGr across adjacent characters.
+            # Release any held modifiers during a pause, then restore them before typing.
+            saved = held.copy()
+            if saved:
+                await send([(key, False) for key in reversed(saved)], last_slow)
+            if duration:
+                await asyncio.sleep(duration)
+            await session.gate.wait()
+            if saved:
+                slow, _, _, speed = session.settings
+                await send([(key, True) for key in saved], slow and not speed)
+
+        for keys, is_character in text_to_evdev_key_batches(text, symmap):
+            if not is_character:
+                # Final modifier releases; never wait at the end of a completed paste.
+                await send(keys, last_slow, last_delay)
+                break
+
+            while not session.gate.is_set():
+                await pause()
+            # A pause is independently possible at each character boundary.
+            if session.settings[1] and typed and random.random() < 0.005:
+                await pause(random.uniform(0.1, 30.0))
+            while not session.gate.is_set():
+                await pause()
+
+            # Re-read settings after any pause, including changes made while waiting.
+            slow, _, super_variable, speed = session.settings
+            started = loop.time()
+            last_slow = slow and not speed
+            last_delay = None
+            if super_variable and not speed:
+                # Vary the selected original rate by +/-25%. A faster rate means
+                # a shorter delay. Original BaseHid delays: normal 5ms, slow 30ms.
+                base_delay = 0.03 if slow else 0.005
+                last_delay = base_delay / random.uniform(0.75, 1.25)
+            await send(keys, last_slow, last_delay)
+            if speed:
+                # Custom WPM overrides both original presets; Super variable varies it.
+                wpm = random.uniform(speed * 0.75, speed * 1.25) if super_variable else speed
+                interval = 60.0 / (5 * wpm)
+                await asyncio.sleep(max(0.0, interval - (loop.time() - started)))
+            typed += 1
 
     def __ensure_symmap(self, keymap_name: str) -> dict[int, dict[int, int]]:
         keymap_name = valid_printable_filename(keymap_name, "keymap")

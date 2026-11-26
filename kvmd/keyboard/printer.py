@@ -25,6 +25,7 @@ import ctypes.util
 import unicodedata
 
 from typing import Generator
+from typing import cast
 
 from evdev import ecodes
 
@@ -135,10 +136,36 @@ def _try_dead_key_decompose(
 
 
 # =====
-def text_to_evdev_keys(  # pylint: disable=too-many-branches
+def text_to_evdev_keys(
     text: str,
     symmap: dict[int, dict[int, int]],
 ) -> Generator[tuple[int, bool], None, None]:
+    # The legacy API emits exactly the same events, with no boundary markers.
+    return cast(Generator[tuple[int, bool], None, None], _text_to_evdev_keys(text, symmap))
+
+
+def text_to_evdev_key_batches(
+    text: str,
+    symmap: dict[int, dict[int, int]],
+) -> Generator[tuple[list[tuple[int, bool]], bool], None, None]:
+    """Yield original event groups at character boundaries, plus final releases."""
+    batch: list[tuple[int, bool]] = []
+    for event in _text_to_evdev_keys(text, symmap, boundaries=True):
+        if event is None:
+            if batch:
+                yield (batch, True)
+                batch = []
+        else:
+            batch.append(event)
+    if batch:
+        yield (batch, False)
+
+
+def _text_to_evdev_keys(  # pylint: disable=too-many-branches
+    text: str,
+    symmap: dict[int, dict[int, int]],
+    boundaries: bool = False,
+) -> Generator[tuple[int, bool] | None, None, None]:
 
     shift = False
     altgr = False
@@ -180,6 +207,7 @@ def text_to_evdev_keys(  # pylint: disable=too-many-branches
                 else:
                     continue
 
+        emitted = False
         for keys in key_sequence:
             for (modifiers, key) in keys.items():
                 if modifiers & SymmapModifiers.CTRL:
@@ -210,7 +238,11 @@ def text_to_evdev_keys(  # pylint: disable=too-many-branches
 
                 yield (key, True)
                 yield (key, False)
+                emitted = True
                 break
+
+        if boundaries and emitted:
+            yield None
 
     if shift:
         yield (ecodes.KEY_LEFTSHIFT, False)
